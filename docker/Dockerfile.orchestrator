@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy orchestrator and install deps
+COPY orchestrator/ orchestrator/
+COPY .env .env
+
+RUN pip install --no-cache-dir httpx python-dotenv
+
+# Will mount india-trade-cli and core-engine as volumes
+CMD ["python", "-m", "orchestrator.daily_cycle", "--daemon"]

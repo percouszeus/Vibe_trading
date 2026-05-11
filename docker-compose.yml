@@ -1,0 +1,88 @@
+version: "3.9"
+
+# ==============================================================================
+# Vibe Trading India — Docker Compose
+# For OCI ARM64 deployment or local development
+# ==============================================================================
+
+services:
+  # ── Ollama (Self-hosted LLM) ────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vibe-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: 10G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Model Puller (one-shot init) ────────────────────────────
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: vibe-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama pull llama3.1:8b
+        ollama pull qwen2.5-coder:7b
+        echo "Models pulled successfully"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+
+  # ── India Trade CLI (Analysis Engine) ──────────────────────
+  trade-cli:
+    build:
+      context: ./india-trade-cli
+      dockerfile: ../docker/Dockerfile.trade-cli
+    container_name: vibe-trade-cli
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - OPENAI_BASE_URL=http://ollama:11434/v1
+      - OPENAI_API_KEY=ollama
+      - AI_PROVIDER=openai
+    volumes:
+      - trade_data:/root/.trading_platform
+      - ./orchestrator:/app/orchestrator:ro
+
+  # ── Orchestrator (Daily Cycle Daemon) ──────────────────────
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.orchestrator
+    container_name: vibe-orchestrator
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - OPENAI_BASE_URL=http://ollama:11434/v1
+    volumes:
+      - trade_data:/root/.trading_platform
+      - ./orchestrator:/app/orchestrator
+      - ./india-trade-cli:/app/india-trade-cli
+      - ./core-engine:/app/core-engine
+    command: python -m orchestrator.daily_cycle --daemon
+
+volumes:
+  ollama_data:
+  trade_data:
