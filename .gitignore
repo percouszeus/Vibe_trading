@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables (contains secrets)
+.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Trading data (persisted locally, not in repo)
+~/.trading_platform/
+
+# Logs
+*.log
+logs/
+
+# Docker
+.docker/
+
+# Ollama models
+.ollama/
