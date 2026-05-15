@@ -87,6 +87,49 @@ class BrokerConfig:
 
 
 @dataclass
+class CapitalConfig:
+    """Capital management — 50/25/25 profit split configuration."""
+
+    initial_capital: float = 1_000_000.0
+    reinvest_pct: float = 0.50         # 50% back to principal
+    ai_fund_pct: float = 0.25          # 25% for AI improvements
+    owner_pct: float = 0.25            # 25% for owner
+    max_drawdown_pct: float = 15.0     # Circuit breaker: halt if exceeded
+    min_trade_capital: float = 50_000   # Won't trade below this
+    compounding_enabled: bool = True
+    ai_auto_approve_limit: float = 500  # Auto-approve AI purchases up to ₹500
+
+
+@dataclass
+class GraduationConfig:
+    """Paper → Live trading graduation criteria."""
+
+    min_trading_days: int = 60
+    min_win_rate: float = 0.50
+    min_sharpe: float = 1.0
+    max_drawdown_pct: float = 10.0
+    min_profit_factor: float = 1.5
+    max_consecutive_losses: int = 5
+    min_model_accuracy: float = 0.55
+    live_start_fraction: float = 0.10   # Start with 10% capital live
+    scale_up_after_days: int = 20       # Add 10% every 20 profitable days
+    daily_loss_limit_pct: float = 0.03  # Stop trading if -3% day
+    weekly_loss_limit_pct: float = 0.05 # Stop trading if -5% week
+    emergency_stop_drawdown: float = 0.15
+
+
+@dataclass
+class TelegramConfig:
+    """Telegram dashboard configuration."""
+
+    bot_token: str = ""
+    chat_id: str = ""
+    send_daily_report: bool = True
+    send_trade_alerts: bool = True
+    send_risk_alerts: bool = True
+
+
+@dataclass
 class Config:
     """Master configuration combining all sub-configs."""
 
@@ -95,6 +138,9 @@ class Config:
     auto_improve: AutoImproveConfig = field(default_factory=AutoImproveConfig)
     auto_heal: AutoHealConfig = field(default_factory=AutoHealConfig)
     broker: BrokerConfig = field(default_factory=BrokerConfig)
+    capital: CapitalConfig = field(default_factory=CapitalConfig)
+    graduation: GraduationConfig = field(default_factory=GraduationConfig)
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
     project_root: Path = PROJECT_ROOT
 
 
@@ -137,5 +183,31 @@ def load_config() -> Config:
             kite_mcp_url=os.getenv("KITE_MCP_URL", "https://mcp.kite.trade/mcp"),
             fyers_app_id=os.getenv("FYERS_APP_ID", ""),
             fyers_secret_key=os.getenv("FYERS_SECRET_KEY", ""),
+        ),
+        capital=CapitalConfig(
+            initial_capital=float(os.getenv("INITIAL_CAPITAL", "1000000")),
+            reinvest_pct=float(os.getenv("REINVEST_PCT", "50")) / 100.0,
+            ai_fund_pct=float(os.getenv("AI_FUND_PCT", "25")) / 100.0,
+            owner_pct=float(os.getenv("OWNER_PCT", "25")) / 100.0,
+            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "15")),
+            min_trade_capital=float(os.getenv("MIN_TRADE_CAPITAL", "50000")),
+            ai_auto_approve_limit=float(os.getenv("AI_AUTO_APPROVE_LIMIT", "500")),
+        ),
+        graduation=GraduationConfig(
+            min_trading_days=int(os.getenv("GRAD_MIN_TRADING_DAYS", "60")),
+            min_win_rate=float(os.getenv("GRAD_MIN_WIN_RATE", "0.50")),
+            min_sharpe=float(os.getenv("GRAD_MIN_SHARPE", "1.0")),
+            max_drawdown_pct=float(os.getenv("GRAD_MAX_DRAWDOWN", "10")),
+            min_profit_factor=float(os.getenv("GRAD_MIN_PROFIT_FACTOR", "1.5")),
+            daily_loss_limit_pct=float(os.getenv("DAILY_LOSS_LIMIT_PCT", "0.03")),
+            weekly_loss_limit_pct=float(os.getenv("WEEKLY_LOSS_LIMIT_PCT", "0.05")),
+            emergency_stop_drawdown=float(os.getenv("EMERGENCY_STOP_DRAWDOWN", "0.15")),
+        ),
+        telegram=TelegramConfig(
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            send_daily_report=os.getenv("TELEGRAM_DAILY_REPORT", "true").lower() == "true",
+            send_trade_alerts=os.getenv("TELEGRAM_TRADE_ALERTS", "true").lower() == "true",
+            send_risk_alerts=os.getenv("TELEGRAM_RISK_ALERTS", "true").lower() == "true",
         ),
     )
