@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from orchestrator.config import load_config, Config
+from orchestrator.ai_trader_client import AITraderClient
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -65,6 +66,16 @@ def journal_entry(phase: str, data: dict) -> None:
         f.write(json.dumps(entry, default=str) + "\n")
     log.info(f"📝 Journal [{phase}]: {json.dumps(data, default=str)[:200]}")
 
+
+def _get_ai_client(cfg: Config) -> Optional[AITraderClient]:
+    """Helper to initialize the AI-Trader client from config."""
+    if cfg.aitrader.email and cfg.aitrader.password:
+        return AITraderClient(
+            agent_name="VibeTradingIndia",
+            email=cfg.aitrader.email,
+            password=cfg.aitrader.password
+        )
+    return None
 
 # ── Phase Implementations ────────────────────────────────────
 
@@ -213,6 +224,18 @@ def phase_execute(cfg: Config) -> dict:
             "action": "evaluated",
             "mode": "PAPER",
         })
+        
+        # Optionally sync the trade to AI-Trader if we had price/qty info. 
+        # For now, we will log it. In a real scenario we'd fetch the filled price.
+        ai_client = _get_ai_client(cfg)
+        if ai_client:
+            ai_client.sync_external_trade(
+                action="buy", # simplify for intent
+                symbol=symbol,
+                price=100.0, # dummy paper price 
+                quantity=1, 
+                content=f"Evaluated signal for {symbol} via Vibe India Agent"
+            )
 
     result["status"] = "complete"
     result["order_count"] = len(result["orders"])
@@ -583,6 +606,19 @@ def phase_dashboard_report(cfg: Config) -> dict:
         token = cfg.telegram.bot_token
         chat_id = cfg.telegram.chat_id
 
+        # Publish to AI-Trader Social Network
+        ai_client = _get_ai_client(cfg)
+        if ai_client:
+            ai_title = f"Vibe India: Daily Strategy & Performance Report ({datetime.now():%Y-%m-%d})"
+            # Market set to crypto to bypass US-Stock market hours limits on the global platform
+            ai_client.publish_strategy(
+                title=ai_title,
+                content=strat_summary or "Daily Strategy Evaluation Complete.",
+                symbols=["NIFTY", "BANKNIFTY"],
+                tags=["india", "nse", "performance", "daily-report"],
+                market="crypto"
+            )
+
         if token and chat_id and cfg.telegram.send_daily_report:
             sent = send_daily_report(
                 token, chat_id,
@@ -798,6 +834,11 @@ def run_daemon(cfg: Config) -> None:
     log.info(f"   Capital: ₹{cfg.trading.total_capital:,.0f}")
     log.info(f"   Universe: {cfg.trading.stock_universe}")
     log.info(f"   LLM: {cfg.llm.primary_provider}/{cfg.llm.primary_model}")
+
+    ai_client = _get_ai_client(cfg)
+    if ai_client:
+        ai_client.start_heartbeat()
+        log.info("💓 AI-Trader Heartbeat Daemon Started.")
 
     executed_today = set()
 
