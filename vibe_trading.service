@@ -1,0 +1,19 @@
+[Unit]
+Description=Vibe Trading Autonomous AI Trader
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Vibe_trading
+Environment=PATH=/home/ubuntu/Vibe_trading/venv/bin:$PATH
+# Load environment variables (API keys)
+EnvironmentFile=/home/ubuntu/Vibe_trading/.env
+ExecStart=/home/ubuntu/Vibe_trading/venv/bin/python orchestrator/daily_cycle.py
+Restart=always
+RestartSec=10
+# Give the system some time to shut down the process gracefully
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

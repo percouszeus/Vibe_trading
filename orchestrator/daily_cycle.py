@@ -111,6 +111,19 @@ def phase_premarket(cfg: Config) -> dict:
 
         log.info(f"Morning brief completed: exit={proc.returncode}")
 
+        # Add Market Screen
+        log.info("Running Market Screen (Momentum)...")
+        screen_proc = subprocess.run(
+            [sys.executable, "-m", "app.main", "screen", "NIFTY50", "momentum"],
+            cwd=str(cli_path),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=_build_env(cfg),
+        )
+        result["screen_output"] = screen_proc.stdout[-2000:] if screen_proc.stdout else ""
+        log.info(f"Market screen completed: exit={screen_proc.returncode}")
+
     except subprocess.TimeoutExpired:
         result["status"] = "timeout"
         log.warning("Morning brief timed out after 300s")
@@ -476,6 +489,21 @@ def phase_auto_improve(cfg: Config) -> dict:
         except Exception as ai_err:
             log.warning(f"AI fund evaluation failed (non-critical): {ai_err}")
 
+        # 7. Run Walk-Forward validation on a benchmark symbol (e.g., RELIANCE) to monitor Ensemble decay
+        try:
+            log.info("Running Walk-Forward Ensemble Validation...")
+            wf_proc = subprocess.run(
+                [sys.executable, "orchestrator/walk_forward.py"],
+                cwd=str(cfg.project_root),
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            result["ensemble_validation"] = wf_proc.stdout[-1000:] if wf_proc.stdout else ""
+            log.info(f"Ensemble validation completed: exit={wf_proc.returncode}")
+        except Exception as wf_err:
+            log.warning(f"Walk-forward validation failed: {wf_err}")
+
         result["status"] = "complete"
 
     except ImportError as e:
@@ -766,18 +794,22 @@ def _send_telegram_alert(cfg: Config, message: str) -> None:
 
 # ── Stock Universe ───────────────────────────────────────────
 
-NIFTY_50 = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
-    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-    "TITAN", "SUNPHARMA", "TATAMOTORS", "WIPRO", "ULTRACEMCO",
-    "NTPC", "ONGC", "POWERGRID", "TATASTEEL", "INDUSINDBK",
-    "JSWSTEEL", "ADANIENT", "ADANIPORTS", "BAJAJFINSV", "COALINDIA",
-    "TECHM", "HCLTECH", "NESTLEIND", "DRREDDY", "CIPLA",
-    "DIVISLAB", "GRASIM", "EICHERMOT", "APOLLOHOSP", "HEROMOTOCO",
-    "BRITANNIA", "M&M", "TATACONSUM", "HINDALCO", "BPCL",
-    "BAJAJ-AUTO", "SHRIRAMFIN", "SBILIFE", "HDFCLIFE", "LTIM",
-]
+try:
+    from market.symbols import NIFTY_50
+except ImportError:
+    # Fallback if path not set yet
+    NIFTY_50 = [
+        "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+        "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
+        "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
+        "TITAN", "SUNPHARMA", "TATAMOTORS", "WIPRO", "ULTRACEMCO",
+        "NTPC", "ONGC", "POWERGRID", "TATASTEEL", "INDUSINDBK",
+        "JSWSTEEL", "ADANIENT", "ADANIPORTS", "BAJAJFINSV", "COALINDIA",
+        "TECHM", "HCLTECH", "NESTLEIND", "DRREDDY", "CIPLA",
+        "DIVISLAB", "GRASIM", "EICHERMOT", "APOLLOHOSP", "HEROMOTOCO",
+        "BRITANNIA", "M&M", "TATACONSUM", "HINDALCO", "BPCL",
+        "BAJAJ-AUTO", "SHRIRAMFIN", "SBILIFE", "HDFCLIFE", "LTIM",
+    ]
 
 
 def _get_stock_universe(name: str) -> list[str]:
