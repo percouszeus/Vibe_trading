@@ -130,6 +130,15 @@ class TelegramConfig:
 
 
 @dataclass
+class AITraderConfig:
+    """HKUDS AI-Trader Integration configuration."""
+
+    email: str = ""
+    password: str = ""
+
+
+
+@dataclass
 class Config:
     """Master configuration combining all sub-configs."""
 
@@ -141,6 +150,7 @@ class Config:
     capital: CapitalConfig = field(default_factory=CapitalConfig)
     graduation: GraduationConfig = field(default_factory=GraduationConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    aitrader: AITraderConfig = field(default_factory=AITraderConfig)
     project_root: Path = PROJECT_ROOT
 
 
@@ -209,5 +219,9 @@ def load_config() -> Config:
             send_daily_report=os.getenv("TELEGRAM_DAILY_REPORT", "true").lower() == "true",
             send_trade_alerts=os.getenv("TELEGRAM_TRADE_ALERTS", "true").lower() == "true",
             send_risk_alerts=os.getenv("TELEGRAM_RISK_ALERTS", "true").lower() == "true",
+        ),
+        aitrader=AITraderConfig(
+            email=os.getenv("AITRADER_EMAIL", ""),
+            password=os.getenv("AITRADER_PASSWORD", ""),
         ),
     )
