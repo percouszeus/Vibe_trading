@@ -298,6 +298,71 @@ def phase_eod(cfg: Config) -> dict:
     return result
 
 
+def phase_capital_split(cfg: Config) -> dict:
+    """
+    15:30 IST — Capital split.
+    Process today's P&L through the 50/25/25 distribution engine.
+    50% reinvest → 25% AI fund → 25% owner payout.
+    """
+    log.info("═══ PHASE: Capital Split (50/25/25) ═══")
+    result = {"phase": "capital_split", "status": "started"}
+
+    try:
+        from orchestrator.capital_manager import load_state, process_daily_pnl, \
+            should_halt_trading, generate_daily_summary
+
+        state = load_state()
+
+        # Calculate today's P&L from journal entries
+        today_file = JOURNAL_DIR / f"{datetime.now():%Y-%m-%d}.jsonl"
+        daily_pnl = 0.0
+
+        if today_file.exists():
+            with open(today_file) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("phase") == "eod":
+                            # Extract P&L from EOD phase
+                            holdings = entry.get("holdings", "")
+                            # Parse P&L from holdings output (simplified)
+                            # In production, the paper broker returns exact P&L
+                            daily_pnl = entry.get("daily_pnl", 0.0)
+                    except json.JSONDecodeError:
+                        continue
+
+        # Process through 50/25/25 split
+        split = process_daily_pnl(state, daily_pnl)
+        result["split"] = split
+        result["principal"] = state.principal
+        result["ai_fund_balance"] = state.ai_fund_balance
+        result["owner_pending"] = state.owner_pending
+
+        # Check if trading should be halted
+        halt, reason = should_halt_trading(
+            state,
+            max_drawdown_pct=cfg.capital.max_drawdown_pct,
+            min_capital=cfg.capital.min_trade_capital,
+        )
+        if halt:
+            result["halt_trading"] = True
+            result["halt_reason"] = reason
+            log.critical(f"🚨 TRADING HALT: {reason}")
+
+        result["status"] = "complete"
+        log.info(f"💰 Split complete: principal=₹{state.principal:,.0f}, "
+                 f"AI fund=₹{state.ai_fund_balance:,.0f}, "
+                 f"owner pending=₹{state.owner_pending:,.0f}")
+
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        log.error(f"Capital split failed: {e}")
+
+    journal_entry("capital_split", result)
+    return result
+
+
 def phase_auto_improve(cfg: Config) -> dict:
     """
     16:00 IST — Auto-improve cycle.
@@ -361,6 +426,32 @@ def phase_auto_improve(cfg: Config) -> dict:
         # 5. Strategy performance review
         if drift_report.analyst_accuracy:
             result["analyst_accuracy"] = drift_report.analyst_accuracy
+
+        # 6. Run AI fund spending evaluation
+        try:
+            from orchestrator.ai_fund_manager import detect_performance_gaps, auto_spend
+            from orchestrator.capital_manager import load_state as load_cap_state, \
+                get_ai_fund_balance, spend_ai_fund
+
+            cap_state = load_cap_state()
+            gaps = detect_performance_gaps()
+            ai_balance = get_ai_fund_balance(cap_state)
+
+            if ai_balance > 100:  # Only spend if we have >₹100
+                purchases = auto_spend(
+                    ai_balance, gaps,
+                    auto_approve_limit=cfg.capital.ai_auto_approve_limit,
+                )
+                for purchase in purchases:
+                    spend_ai_fund(cap_state, purchase["amount"], purchase["description"],
+                                  purchase["category"])
+                result["ai_purchases"] = purchases
+                result["ai_fund_balance"] = cap_state.ai_fund_balance
+                log.info(f"AI Fund: {len(purchases)} purchases, "
+                         f"balance ₹{cap_state.ai_fund_balance:,.0f}")
+
+        except Exception as ai_err:
+            log.warning(f"AI fund evaluation failed (non-critical): {ai_err}")
 
         result["status"] = "complete"
 
@@ -442,6 +533,144 @@ def phase_auto_heal(cfg: Config) -> dict:
         _send_telegram_alert(cfg, f"🔧 Auto-heal issues: {issues}")
 
     journal_entry("auto_heal", result)
+    return result
+
+
+def phase_dashboard_report(cfg: Config) -> dict:
+    """
+    17:30 IST — Dashboard report.
+    Send full daily trading report via Telegram.
+    """
+    log.info("═══ PHASE: Dashboard Report ═══")
+    result = {"phase": "dashboard_report", "status": "started"}
+
+    try:
+        from orchestrator.capital_manager import load_state, generate_daily_summary
+        from orchestrator.strategy_portfolio import load_strategy_performance, \
+            get_strategy_summary
+        from orchestrator.live_graduation import load_graduation_state, evaluate_graduation
+        from orchestrator.ai_fund_manager import get_spending_summary
+        from orchestrator.telegram_dashboard import send_daily_report
+
+        cap_state = load_state()
+        cap_summary = generate_daily_summary(cap_state)
+
+        # Get today's split from journal
+        split = {"daily_pnl": cap_state.realized_pnl_today}
+        today_file = JOURNAL_DIR / f"{datetime.now():%Y-%m-%d}.jsonl"
+        if today_file.exists():
+            with open(today_file) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("phase") == "capital_split":
+                            split = entry.get("split", split)
+                    except json.JSONDecodeError:
+                        continue
+
+        # Strategy summary
+        perf = load_strategy_performance()
+        strat_summary = get_strategy_summary(perf)
+
+        # Graduation progress
+        grad_state = load_graduation_state()
+        grad_result = evaluate_graduation(grad_state)
+
+        # AI fund
+        spending = get_spending_summary()
+
+        # Send report
+        token = cfg.telegram.bot_token
+        chat_id = cfg.telegram.chat_id
+
+        if token and chat_id and cfg.telegram.send_daily_report:
+            sent = send_daily_report(
+                token, chat_id,
+                capital_summary=cap_summary,
+                split=split,
+                strategy_summary=strat_summary,
+                ai_fund_balance=cap_state.ai_fund_balance,
+                graduation_result=grad_result,
+            )
+            result["telegram_sent"] = sent
+        else:
+            result["telegram_sent"] = False
+            log.info("Telegram not configured — skipping report")
+
+        result["status"] = "complete"
+
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        log.error(f"Dashboard report failed: {e}")
+
+    journal_entry("dashboard_report", result)
+    return result
+
+
+def phase_graduation_check(cfg: Config) -> dict:
+    """
+    18:00 IST — Graduation check.
+    Evaluate if the system meets criteria to transition
+    from PAPER → SHADOW → MICRO_LIVE → FULL_LIVE.
+    """
+    log.info("═══ PHASE: Graduation Check ═══")
+    result = {"phase": "graduation_check", "status": "started"}
+
+    try:
+        from orchestrator.live_graduation import load_graduation_state, \
+            evaluate_graduation, GraduationCriteria, promote_mode, \
+            get_graduation_progress_text
+        from orchestrator.capital_manager import load_state
+        from orchestrator.telegram_dashboard import send_alert
+
+        grad_state = load_graduation_state()
+        cap_state = load_state()
+
+        # Update graduation state from capital state
+        grad_state.trading_days = cap_state.trading_days
+        if cap_state.trading_days > 0:
+            grad_state.win_rate = cap_state.profitable_days / cap_state.trading_days
+        grad_state.max_drawdown_pct = cap_state.max_drawdown_pct
+        grad_state.max_consecutive_losses = cap_state.max_consecutive_loss_days
+
+        # Evaluate
+        criteria = GraduationCriteria(
+            min_trading_days=cfg.graduation.min_trading_days,
+            min_win_rate=cfg.graduation.min_win_rate,
+            min_sharpe=cfg.graduation.min_sharpe,
+            max_drawdown_pct=cfg.graduation.max_drawdown_pct,
+            min_profit_factor=cfg.graduation.min_profit_factor,
+        )
+        eval_result = evaluate_graduation(grad_state, criteria)
+        result["evaluation"] = eval_result
+
+        progress_text = get_graduation_progress_text(grad_state)
+        log.info(f"\n{progress_text}")
+
+        # Auto-promote if all criteria met
+        if eval_result["all_passed"]:
+            recommended = eval_result["recommended_mode"]
+            if recommended != grad_state.current_mode:
+                log.info(f"🎓 GRADUATION ELIGIBLE: {grad_state.current_mode} → {recommended}")
+                result["promotion_available"] = recommended
+
+                # Send Telegram alert
+                token = cfg.telegram.bot_token
+                chat_id = cfg.telegram.chat_id
+                if token and chat_id:
+                    send_alert(token, chat_id, "graduation",
+                               f"System ready to graduate from {grad_state.current_mode} "
+                               f"to {recommended}!\n\n{progress_text}")
+
+        result["status"] = "complete"
+
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        log.error(f"Graduation check failed: {e}")
+
+    journal_entry("graduation_check", result)
     return result
 
 
@@ -549,13 +778,16 @@ def _build_env(cfg: Config) -> dict:
 # ── Daemon Mode ──────────────────────────────────────────────
 
 SCHEDULE = [
-    ("08:45", "premarket", phase_premarket),
-    ("09:15", "analysis",  phase_analysis),
-    ("09:30", "execute",   phase_execute),
-    ("12:30", "midday",    phase_midday),
-    ("15:15", "eod",       phase_eod),
-    ("16:00", "auto_improve", phase_auto_improve),
-    ("17:00", "auto_heal", phase_auto_heal),
+    ("08:45", "premarket",        phase_premarket),
+    ("09:15", "analysis",         phase_analysis),
+    ("09:30", "execute",          phase_execute),
+    ("12:30", "midday",           phase_midday),
+    ("15:15", "eod",              phase_eod),
+    ("15:30", "capital_split",    phase_capital_split),
+    ("16:00", "auto_improve",     phase_auto_improve),
+    ("17:00", "auto_heal",        phase_auto_heal),
+    ("17:30", "dashboard_report", phase_dashboard_report),
+    ("18:00", "graduation_check", phase_graduation_check),
 ]
 
 
@@ -602,7 +834,9 @@ def main():
     parser = argparse.ArgumentParser(description="Vibe Trading India — Daily Orchestrator")
     parser.add_argument(
         "--phase",
-        choices=["premarket", "analysis", "execute", "midday", "eod", "auto_improve", "auto_heal", "all"],
+        choices=["premarket", "analysis", "execute", "midday", "eod",
+                 "capital_split", "auto_improve", "auto_heal",
+                 "dashboard_report", "graduation_check", "all"],
         help="Run a specific phase (or 'all' to run all sequentially)",
     )
     parser.add_argument("--daemon", action="store_true", help="Run as a daemon with scheduled execution")
@@ -629,8 +863,11 @@ def main():
             "execute": phase_execute,
             "midday": phase_midday,
             "eod": phase_eod,
+            "capital_split": phase_capital_split,
             "auto_improve": phase_auto_improve,
             "auto_heal": phase_auto_heal,
+            "dashboard_report": phase_dashboard_report,
+            "graduation_check": phase_graduation_check,
         }
         if args.phase == "all":
             for name, fn in phase_map.items():

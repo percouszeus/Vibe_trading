@@ -86,3 +86,5 @@ services:
 volumes:
   ollama_data:
   trade_data:
+  # Capital state, graduation state, AI fund logs persist across restarts
+
