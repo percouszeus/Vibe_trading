@@ -73,14 +73,21 @@ def journal_entry(phase: str, data: dict) -> None:
     log.info(f"📝 Journal [{phase}]: {json.dumps(data, default=str)[:200]}")
 
 
+_shared_ai_client = None
+
 def _get_ai_client(cfg: Config) -> Optional[AITraderClient]:
-    """Helper to initialize the AI-Trader client from config."""
+    """Helper to initialize the AI-Trader client from config (Singleton)."""
+    global _shared_ai_client
+    if _shared_ai_client is not None:
+        return _shared_ai_client
+        
     if cfg.aitrader.email and cfg.aitrader.password:
-        return AITraderClient(
+        _shared_ai_client = AITraderClient(
             agent_name="VibeTradingIndia_Zeus",
             email=cfg.aitrader.email,
             password=cfg.aitrader.password
         )
+        return _shared_ai_client
     return None
 
 # ── Market Data Sync ──────────────────────────────────────────
@@ -282,6 +289,8 @@ def phase_execute(cfg: Config) -> dict:
 
     # For each successful signal, attempt trade
     mode = cfg.trading.mode.upper()
+    ai_client = _get_ai_client(cfg)
+    
     for signal in signals:
         if signal.get("status") != "success":
             continue
@@ -298,7 +307,6 @@ def phase_execute(cfg: Config) -> dict:
         })
         
         # Sync the trade to AI-Trader
-        ai_client = _get_ai_client(cfg)
         if ai_client:
             # BUG-05 FIX: entry_price is never set by analysis phase;
             # pass None instead of a misleading 0.0

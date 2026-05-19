@@ -30,20 +30,32 @@ class AITraderClient:
         login_url = f"{BASE_URL}/claw/agents/login"
         payload = {"name": self.agent_name, "password": self.password}
         
-        try:
-            resp = requests.post(login_url, json=payload, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("token") or data.get("success"):
-                    self.token = data.get("token")
-                    self.agent_id = data.get("agent_id")
-                    logger.info(f"Successfully logged into AI-Trader platform. Agent ID: {self.agent_id}")
+        for attempt in range(3):
+            try:
+                resp = requests.post(login_url, json=payload, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("token") or data.get("success"):
+                        self.token = data.get("token")
+                        self.agent_id = data.get("agent_id")
+                        logger.info(f"Successfully logged into AI-Trader platform. Agent ID: {self.agent_id}")
+                        return
+                
+                if resp.status_code in (404, 401, 422):
+                    logger.info(f"Login failed (Status {resp.status_code}), attempting registration...")
+                    self._register()
                     return
-            
-            logger.info(f"Login failed (perhaps new agent), attempting registration...")
-            self._register()
-        except Exception as e:
-            logger.error(f"Error during AI-Trader auth: {e}")
+                elif resp.status_code == 429:
+                    logger.warning(f"Rate limited (429) during login. Retrying... ({attempt+1}/3)")
+                    time.sleep(2)
+                    continue
+                else:
+                    logger.error(f"Login failed with status {resp.status_code}: {resp.text}")
+                    return
+                    
+            except Exception as e:
+                logger.error(f"Error during AI-Trader auth attempt {attempt+1}: {e}")
+                time.sleep(2)
 
     def _register(self):
         register_url = f"{BASE_URL}/claw/agents/selfRegister"
