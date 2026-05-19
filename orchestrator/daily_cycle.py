@@ -77,7 +77,7 @@ def _get_ai_client(cfg: Config) -> Optional[AITraderClient]:
     """Helper to initialize the AI-Trader client from config."""
     if cfg.aitrader.email and cfg.aitrader.password:
         return AITraderClient(
-            agent_name="VibeTradingIndia",
+            agent_name="VibeTradingIndia_Zeus",
             email=cfg.aitrader.email,
             password=cfg.aitrader.password
         )
