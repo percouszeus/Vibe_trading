@@ -944,6 +944,7 @@ def _build_env(cfg: Config) -> dict:
         "AI_MODEL": llm["model"],
         "KITE_API_KEY": cfg.broker.kite_api_key,
         "KITE_API_SECRET": cfg.broker.kite_api_secret,
+        "_CLI_BATCH_MODE": "1",
     })
     # BUG-10 FIX: Forward Fyers credentials for subprocesses using Fyers broker
     if hasattr(cfg.broker, 'fyers_app_id') and cfg.broker.fyers_app_id:

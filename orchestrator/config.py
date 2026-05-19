@@ -231,26 +231,49 @@ def get_active_llm_config(cfg: Config) -> dict:
     """
     Resolve which LLM provider to use for subprocesses.
     Priority: NIM (cloud, 70B) → OpenRouter (cloud) → Ollama (local).
-
-    Returns dict with keys: base_url, api_key, model, provider
+    Verifies connection validity to prevent authorization failures.
     """
+    import openai
+    import logging
+    logger = logging.getLogger("orchestrator")
+
     # 1. NVIDIA NIM — best quality (70B model), free tier available
-    if cfg.llm.nim_api_key:
-        return {
-            "provider": "nim",
-            "base_url": cfg.llm.nim_base_url,
-            "api_key": cfg.llm.nim_api_key,
-            "model": cfg.llm.nim_model,
-        }
+    if cfg.llm.nim_api_key and cfg.llm.nim_api_key.strip():
+        try:
+            client = openai.OpenAI(base_url=cfg.llm.nim_base_url, api_key=cfg.llm.nim_api_key)
+            client.chat.completions.create(
+                model=cfg.llm.nim_model,
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5,
+                timeout=4.0
+            )
+            return {
+                "provider": "nim",
+                "base_url": cfg.llm.nim_base_url,
+                "api_key": cfg.llm.nim_api_key,
+                "model": cfg.llm.nim_model,
+            }
+        except Exception as e:
+            logger.warning(f"NVIDIA NIM validation failed ({e}), trying OpenRouter fallback...")
 
     # 2. OpenRouter — good fallback, multiple models
-    if cfg.llm.openrouter_api_key:
-        return {
-            "provider": "openrouter",
-            "base_url": cfg.llm.openrouter_base_url,
-            "api_key": cfg.llm.openrouter_api_key,
-            "model": cfg.llm.openrouter_model,
-        }
+    if cfg.llm.openrouter_api_key and cfg.llm.openrouter_api_key.strip():
+        try:
+            client = openai.OpenAI(base_url=cfg.llm.openrouter_base_url, api_key=cfg.llm.openrouter_api_key)
+            client.chat.completions.create(
+                model=cfg.llm.openrouter_model,
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5,
+                timeout=4.0
+            )
+            return {
+                "provider": "openrouter",
+                "base_url": cfg.llm.openrouter_base_url,
+                "api_key": cfg.llm.openrouter_api_key,
+                "model": cfg.llm.openrouter_model,
+            }
+        except Exception as e:
+            logger.warning(f"OpenRouter validation failed ({e}), trying local Ollama fallback...")
 
     # 3. Ollama — local, no API key needed, but must be running
     return {
