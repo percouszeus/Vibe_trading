@@ -33,8 +33,25 @@ fi
 
 log "Step 1/8: Installing system dependencies..."
 sudo apt-get update -qq
+
+# Dynamically determine the best python package to install
+PYTHON_PKG="python3"
+PYTHON_VENV="python3-venv"
+PYTHON_DEV="python3-dev"
+
+if apt-cache show python3.11 &>/dev/null; then
+    PYTHON_PKG="python3.11"
+    PYTHON_VENV="python3.11-venv"
+    PYTHON_DEV="python3.11-dev"
+elif apt-cache show python3.12 &>/dev/null; then
+    PYTHON_PKG="python3.12"
+    PYTHON_VENV="python3.12-venv"
+    PYTHON_DEV="python3.12-dev"
+fi
+
+log "Selected Python package: $PYTHON_PKG"
 sudo apt-get install -y -qq \
-    python3.11 python3.11-venv python3.11-dev \
+    $PYTHON_PKG $PYTHON_VENV $PYTHON_DEV \
     python3-pip \
     git curl wget jq \
     build-essential \
@@ -119,7 +136,7 @@ fi
 # ── Step 5: Python Virtual Environment ──────────────────────
 
 log "Step 5/8: Setting up Python environment..."
-python3.11 -m venv "${WORK_DIR}/venv"
+python3 -m venv "${WORK_DIR}/venv"
 source "${WORK_DIR}/venv/bin/activate"
 
 # Upgrade pip
