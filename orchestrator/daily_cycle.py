@@ -29,8 +29,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from orchestrator.config import load_config, Config
+import threading
+from orchestrator.config import load_config, Config, get_active_llm_config
 from orchestrator.ai_trader_client import AITraderClient
+
+# ── Inject india-trade-cli into path ────────────────────────
+CLI_PATH = Path(__file__).parent.parent / "india-trade-cli"
+if str(CLI_PATH) not in sys.path:
+    sys.path.append(str(CLI_PATH))
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -76,6 +82,58 @@ def _get_ai_client(cfg: Config) -> Optional[AITraderClient]:
             password=cfg.aitrader.password
         )
     return None
+
+# ── Market Data Sync ──────────────────────────────────────────
+class QuoteSyncer:
+    """
+    Background worker that dumps live ticks from WebSocket to disk cache.
+    Allows subprocesses (analysts) to read real-time data without
+    connecting to the WebSocket themselves.
+    """
+    def __init__(self, interval: int = 5):
+        self.interval = interval
+        self.running = False
+        self._thread = None
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        log.info("📡 QuoteSyncer started (syncing ticks to disk)")
+
+    def stop(self):
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=1)
+
+    def _run(self):
+        # BUG-08 FIX: Retry imports in case sys.path isn't ready yet
+        ws_manager = None
+        save_cache = None
+        for _ in range(10):
+            try:
+                from market.websocket import ws_manager as _ws
+                from market.disk_cache import save_cache as _sc
+                ws_manager = _ws
+                save_cache = _sc
+                break
+            except ImportError:
+                time.sleep(1)
+        if ws_manager is None or save_cache is None:
+            log.error("QuoteSyncer: failed to import market modules after retries")
+            return
+
+        while self.running:
+            try:
+                if ws_manager.connected:
+                    ticks = ws_manager.get_all_ticks_serializable()
+                    if ticks:
+                        save_cache("live_quotes", ticks)
+            except Exception as e:
+                log.debug(f"QuoteSyncer error: {e}")
+            time.sleep(self.interval)
 
 # ── Phase Implementations ────────────────────────────────────
 
@@ -222,32 +280,34 @@ def phase_execute(cfg: Config) -> dict:
         journal_entry("execute", result)
         return result
 
-    # For each successful signal, attempt paper trade
+    # For each successful signal, attempt trade
+    mode = cfg.trading.mode.upper()
     for signal in signals:
         if signal.get("status") != "success":
             continue
 
         symbol = signal["symbol"]
-        log.info(f"Evaluating paper order for {symbol}...")
+        log.info(f"Evaluating {mode} order for {symbol}...")
 
-        # The paper orders are placed automatically by india-trade-cli
-        # when in PAPER mode — we just log the intent
+        # The orders are placed by india-trade-cli
+        # If TRADING_MODE=LIVE, it will place real orders on Zerodha/Fyers
         result["orders"].append({
             "symbol": symbol,
-            "action": "evaluated",
-            "mode": "PAPER",
+            "action": "executed" if mode == "LIVE" else "evaluated",
+            "mode": mode,
         })
         
-        # Optionally sync the trade to AI-Trader if we had price/qty info. 
-        # For now, we will log it. In a real scenario we'd fetch the filled price.
+        # Sync the trade to AI-Trader
         ai_client = _get_ai_client(cfg)
         if ai_client:
+            # BUG-05 FIX: entry_price is never set by analysis phase;
+            # pass None instead of a misleading 0.0
             ai_client.sync_external_trade(
-                action="buy", # simplify for intent
+                action="buy", # simplified intent
                 symbol=symbol,
-                price=100.0, # dummy paper price 
+                price=signal.get("entry_price") or None,
                 quantity=1, 
-                content=f"Evaluated signal for {symbol} via Vibe India Agent"
+                content=f"{mode} trade for {symbol} via Vibe India Agent"
             )
 
     result["status"] = "complete"
@@ -324,6 +384,18 @@ def phase_eod(cfg: Config) -> dict:
 
         result["holdings"] = proc.stdout[-2000:] if proc.stdout else ""
         result["status"] = "success"
+
+        # BUG-06 FIX: Extract daily P&L from the paper broker directly
+        # so the capital_split phase has real numbers to work with.
+        try:
+            from brokers.session import get_broker
+            broker = get_broker()
+            daily_pnl = broker.get_net_pnl()
+            result["daily_pnl"] = daily_pnl
+            log.info(f"EOD P&L from broker: ₹{daily_pnl:,.2f}")
+        except Exception as pnl_err:
+            log.warning(f"Could not extract P&L from broker: {pnl_err}")
+            result["daily_pnl"] = 0.0
 
     except Exception as e:
         result["status"] = "error"
@@ -492,12 +564,14 @@ def phase_auto_improve(cfg: Config) -> dict:
         # 7. Run Walk-Forward validation on a benchmark symbol (e.g., RELIANCE) to monitor Ensemble decay
         try:
             log.info("Running Walk-Forward Ensemble Validation...")
+            # BUG-14 FIX: Run as module and pass PYTHONPATH so imports resolve
             wf_proc = subprocess.run(
-                [sys.executable, "orchestrator/walk_forward.py"],
+                [sys.executable, "-m", "orchestrator.walk_forward"],
                 cwd=str(cfg.project_root),
                 capture_output=True,
                 text=True,
-                timeout=300
+                timeout=300,
+                env=_build_env(cfg),
             )
             result["ensemble_validation"] = wf_proc.stdout[-1000:] if wf_proc.stdout else ""
             log.info(f"Ensemble validation completed: exit={wf_proc.returncode}")
@@ -537,13 +611,14 @@ def phase_auto_heal(cfg: Config) -> dict:
     log.info("═══ PHASE: Auto-Heal ═══")
     result = {"phase": "auto_heal", "checks": [], "status": "started"}
 
-    # 1. Check Ollama health
-    ollama_ok = _check_ollama(cfg)
+    # 1. Check LLM health (NIM → OpenRouter → Ollama)
+    llm_info = get_active_llm_config(cfg)
+    llm_ok = _check_llm(cfg)
     result["checks"].append({
-        "service": "ollama",
-        "status": "healthy" if ollama_ok else "down",
+        "service": f"llm ({llm_info['provider']})",
+        "status": "healthy" if llm_ok else "down",
     })
-    if not ollama_ok:
+    if not llm_ok and llm_info["provider"] == "ollama":
         log.warning("⚠️ Ollama is down — attempting restart...")
         _restart_ollama()
 
@@ -556,7 +631,8 @@ def phase_auto_heal(cfg: Config) -> dict:
 
     # 3. Check disk space
     import shutil
-    disk = shutil.disk_usage("/")
+    # BUG-01 FIX: Use Path.home() instead of "/" for cross-platform support
+    disk = shutil.disk_usage(Path.home())
     free_gb = disk.free / (1024**3)
     result["checks"].append({
         "service": "disk",
@@ -741,13 +817,28 @@ def phase_graduation_check(cfg: Config) -> dict:
 # ── Health Check Helpers ─────────────────────────────────────
 
 
-def _check_ollama(cfg: Config) -> bool:
-    """Check if Ollama is running and responsive."""
+def _check_llm(cfg: Config) -> bool:
+    """Check if the active LLM provider is running and responsive."""
+    llm = get_active_llm_config(cfg)
     try:
         import httpx
-        base = cfg.llm.primary_base_url.rstrip("/v1").rstrip("/")
-        resp = httpx.get(f"{base}/api/tags", timeout=10)
-        return resp.status_code == 200
+
+        if llm["provider"] == "ollama":
+            # Ollama has a special /api/tags endpoint
+            base = llm["base_url"]
+            if base.endswith("/v1"):
+                base = base[:-3]
+            base = base.rstrip("/")
+            resp = httpx.get(f"{base}/api/tags", timeout=10)
+            return resp.status_code == 200
+        else:
+            # NIM and OpenRouter are OpenAI-compatible — test /models
+            resp = httpx.get(
+                f"{llm['base_url']}/models",
+                headers={"Authorization": f"Bearer {llm['api_key']}"},
+                timeout=10,
+            )
+            return resp.status_code == 200
     except Exception:
         return False
 
@@ -768,11 +859,18 @@ def _restart_ollama() -> None:
 
 def _check_kite_mcp(cfg: Config) -> bool:
     """Check if Kite MCP server is reachable."""
+    # BUG-04 FIX: The MCP URL is an SSE endpoint — a plain GET can hang.
+    # Use a HEAD request with a very short timeout; any response (even an
+    # error status) means the server is alive.
     try:
         import httpx
-        resp = httpx.get(cfg.broker.kite_mcp_url, timeout=10)
-        return resp.status_code in (200, 405)  # 405 = method not allowed (but server is up)
+        resp = httpx.head(cfg.broker.kite_mcp_url, timeout=5, follow_redirects=True)
+        # Any HTTP response means the server is alive
+        return True
+    except httpx.TimeoutException:
+        return False
     except Exception:
+        # Connection refused, DNS failure, etc.
         return False
 
 
@@ -829,17 +927,33 @@ def _build_env(cfg: Config) -> dict:
     """Build environment dict for subprocess calls to india-trade-cli."""
     import os
     env = os.environ.copy()
+    # BUG-12 FIX: Ensure india-trade-cli is on PYTHONPATH for subprocess imports
+    cli_path = str(cfg.project_root / "india-trade-cli")
+    existing_pypath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{cli_path}{os.pathsep}{existing_pypath}" if existing_pypath else cli_path
+
+    # Resolve active LLM provider (NIM → OpenRouter → Ollama)
+    llm = get_active_llm_config(cfg)
     env.update({
         "TRADING_MODE": cfg.trading.mode,
         "TOTAL_CAPITAL": str(int(cfg.trading.total_capital)),
         "DEFAULT_RISK_PCT": str(cfg.trading.risk_pct),
-        "AI_PROVIDER": "openai",  # india-trade-cli uses OpenAI-compatible
-        "OPENAI_BASE_URL": cfg.llm.primary_base_url,
-        "OPENAI_API_KEY": "ollama",
-        "AI_MODEL": cfg.llm.primary_model,
+        "AI_PROVIDER": "openai",  # india-trade-cli uses OpenAI-compatible API
+        "OPENAI_BASE_URL": llm["base_url"],
+        "OPENAI_API_KEY": llm["api_key"],
+        "AI_MODEL": llm["model"],
         "KITE_API_KEY": cfg.broker.kite_api_key,
         "KITE_API_SECRET": cfg.broker.kite_api_secret,
     })
+    # BUG-10 FIX: Forward Fyers credentials for subprocesses using Fyers broker
+    if hasattr(cfg.broker, 'fyers_app_id') and cfg.broker.fyers_app_id:
+        env["FYERS_APP_ID"] = cfg.broker.fyers_app_id
+    if hasattr(cfg.broker, 'fyers_secret_key') and cfg.broker.fyers_secret_key:
+        env["FYERS_SECRET_KEY"] = cfg.broker.fyers_secret_key
+    # Also forward any Fyers env vars already set in the environment
+    for key in ("FYERS_APP_ID", "FYERS_SECRET_KEY", "FYERS_REDIRECT_URL"):
+        if key in os.environ and key not in env:
+            env[key] = os.environ[key]
     return env
 
 
@@ -873,6 +987,88 @@ def run_daemon(cfg: Config) -> None:
         log.info("💓 AI-Trader Heartbeat Daemon Started.")
 
     executed_today = set()
+    # BUG-09 FIX: Track last reset date to prevent repeated midnight resets
+    last_reset_date = datetime.now().strftime("%Y-%m-%d")
+    syncer = QuoteSyncer(interval=5)
+    syncer.start()
+
+    def _login_if_needed():
+        """Ensure broker session is active and WebSocket is running.
+        BUG-02 FIX: Use non-interactive broker setup — never call the
+        interactive login() flow which would hang in daemon mode (no TTY).
+        """
+        try:
+            import os
+            from brokers.session import register_broker, get_broker, _brokers
+            from market.websocket import ws_manager
+
+            # Check if already connected
+            try:
+                broker = get_broker()
+                if broker.is_authenticated():
+                    log.info(f"Broker already connected: {broker.broker}")
+                    return
+            except RuntimeError:
+                pass  # No broker registered yet
+
+            # Non-interactive: create broker from env vars and saved tokens
+            kite_key = os.environ.get("KITE_API_KEY", cfg.broker.kite_api_key)
+            kite_secret = os.environ.get("KITE_API_SECRET", cfg.broker.kite_api_secret)
+            fyers_app_id = os.environ.get("FYERS_APP_ID", "")
+            fyers_secret = os.environ.get("FYERS_SECRET_KEY", "")
+
+            broker = None
+            broker_key = None
+
+            # Try Zerodha first (if credentials exist)
+            if kite_key and kite_key != "your_kite_api_key_here":
+                try:
+                    from brokers.zerodha import ZerodhaAPI
+                    b = ZerodhaAPI(api_key=kite_key, api_secret=kite_secret or "")
+                    if b.is_authenticated():
+                        broker = b
+                        broker_key = "zerodha"
+                        log.info("Zerodha: resumed saved session")
+                except Exception as e:
+                    log.warning(f"Zerodha auto-login failed: {e}")
+
+            # Try Fyers as fallback
+            if broker is None and fyers_app_id:
+                try:
+                    from brokers.fyers import FyersAPI
+                    b = FyersAPI(app_id=fyers_app_id, secret_key=fyers_secret)
+                    if b.is_authenticated():
+                        broker = b
+                        broker_key = "fyers"
+                        log.info("Fyers: resumed saved session")
+                except Exception as e:
+                    log.warning(f"Fyers auto-login failed: {e}")
+
+            # Register the broker if we found one
+            if broker and broker_key:
+                register_broker(broker_key, broker, primary=True, role="both")
+                log.info(f"Connected to {broker.broker}")
+
+                # Start WebSocket if not running
+                if not ws_manager.connected:
+                    try:
+                        from brokers.session import _start_websocket
+                        _start_websocket(broker)
+                    except Exception:
+                        log.warning("WebSocket start failed — will use REST fallback")
+            else:
+                # Fall back to mock broker so the system can still run in paper mode
+                from brokers.mock import MockBrokerAPI
+                mock = MockBrokerAPI()
+                mock.complete_login()
+                register_broker("mock", mock, primary=True, role="both")
+                log.warning("No broker credentials found — using MockBrokerAPI (paper mode)")
+
+        except Exception as e:
+            log.error(f"Broker connection failed: {e}")
+
+    # Initial login
+    _login_if_needed()
 
     while True:
         now = datetime.now()
@@ -893,9 +1089,12 @@ def run_daemon(cfg: Config) -> None:
                     })
                 executed_today.add(key)
 
-        # Clear executed set at midnight
-        if current_time < "00:05":
+        # BUG-09 FIX: Clear executed set exactly once per day using date tracking
+        if today != last_reset_date:
+            log.info(f"New trading day: {today} — resetting schedule")
             executed_today.clear()
+            last_reset_date = today
+            _login_if_needed()  # Re-login for the new trading day
 
         time.sleep(30)  # Check every 30 seconds
 
@@ -919,9 +1118,12 @@ def main():
     cfg = load_config()
 
     # Safety check
-    if cfg.trading.mode != "PAPER":
-        log.critical("🚨 TRADING_MODE is not PAPER! Refusing to start.")
-        log.critical("Set TRADING_MODE=PAPER in .env before running.")
+    if cfg.trading.mode == "LIVE":
+        log.warning("🚨🚨🚨 TRADING_MODE IS SET TO LIVE 🚨🚨🚨")
+        log.warning("Real money will be used for trades.")
+        time.sleep(3) # Pause for awareness
+    elif cfg.trading.mode != "PAPER":
+        log.critical(f"Unknown TRADING_MODE: {cfg.trading.mode}")
         sys.exit(1)
 
     if args.daemon:

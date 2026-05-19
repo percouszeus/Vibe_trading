@@ -14,18 +14,12 @@ sudo apt-get install -y python3-pip python3-venv git htop screen
 # 2. Setup project directory
 PROJECT_DIR="$HOME/Vibe_trading"
 if [ ! -d "$PROJECT_DIR" ]; then
-    echo "Cloning repository..."
-    # Assuming the repo is public or ssh keys are set up.
-    # Replace with the actual repository URL
-    git clone https://github.com/percouszeus/Vibe_trading.git "$PROJECT_DIR"
-else
-    echo "Repository exists. Pulling latest changes..."
-    cd "$PROJECT_DIR"
-    git reset --hard HEAD
-    git pull origin main
+    echo "Creating project directory..."
+    mkdir -p "$PROJECT_DIR"
 fi
 
 cd "$PROJECT_DIR"
+
 
 # 3. Setup Virtual Environment
 if [ ! -d "venv" ]; then
@@ -36,7 +30,7 @@ fi
 echo "Installing requirements..."
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r india-trade-cli/requirements.txt
 
 # 4. Configure systemd service
 echo "Configuring systemd service..."

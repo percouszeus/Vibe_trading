@@ -1,19 +1,48 @@
 [Unit]
-Description=Vibe Trading Autonomous AI Trader
-After=network.target
+Description=Vibe Trading India — Autonomous AI Paper Trader
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/Vibe_trading
-Environment=PATH=/home/ubuntu/Vibe_trading/venv/bin:$PATH
-# Load environment variables (API keys)
+Environment=PATH=/home/ubuntu/Vibe_trading/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+# Load secrets from .env (chmod 600 this file!)
 EnvironmentFile=/home/ubuntu/Vibe_trading/.env
-ExecStart=/home/ubuntu/Vibe_trading/venv/bin/python orchestrator/daily_cycle.py
+
+# Main process
+ExecStart=/home/ubuntu/Vibe_trading/venv/bin/python -m orchestrator.daily_cycle --daemon
+
+# Restart policy
 Restart=always
-RestartSec=10
-# Give the system some time to shut down the process gracefully
+RestartSec=30
 TimeoutStopSec=30
+
+# ── Security Sandboxing ──────────────────────────────────────
+# Prevent privilege escalation
+NoNewPrivileges=true
+# Restrict filesystem access
+ProtectSystem=strict
+ProtectHome=read-only
+# Allow writes only to trading data and logs
+ReadWritePaths=/home/ubuntu/.trading_platform
+ReadWritePaths=/home/ubuntu/Vibe_trading
+# Restrict kernel features
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+# Network access required for APIs
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Restrict capabilities
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# ── Logging ──────────────────────────────────────────────────
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vibe-trading
 
 [Install]
 WantedBy=multi-user.target

@@ -225,3 +225,37 @@ def load_config() -> Config:
             password=os.getenv("AITRADER_PASSWORD", ""),
         ),
     )
+
+
+def get_active_llm_config(cfg: Config) -> dict:
+    """
+    Resolve which LLM provider to use for subprocesses.
+    Priority: NIM (cloud, 70B) → OpenRouter (cloud) → Ollama (local).
+
+    Returns dict with keys: base_url, api_key, model, provider
+    """
+    # 1. NVIDIA NIM — best quality (70B model), free tier available
+    if cfg.llm.nim_api_key:
+        return {
+            "provider": "nim",
+            "base_url": cfg.llm.nim_base_url,
+            "api_key": cfg.llm.nim_api_key,
+            "model": cfg.llm.nim_model,
+        }
+
+    # 2. OpenRouter — good fallback, multiple models
+    if cfg.llm.openrouter_api_key:
+        return {
+            "provider": "openrouter",
+            "base_url": cfg.llm.openrouter_base_url,
+            "api_key": cfg.llm.openrouter_api_key,
+            "model": cfg.llm.openrouter_model,
+        }
+
+    # 3. Ollama — local, no API key needed, but must be running
+    return {
+        "provider": "ollama",
+        "base_url": cfg.llm.primary_base_url,
+        "api_key": "ollama",
+        "model": cfg.llm.primary_model,
+    }

@@ -15,7 +15,16 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Any
+
+# Bridge to india-trade-cli
+import sys
+from pathlib import Path
+root = Path(__file__).resolve().parent.parent
+if str(root / "india-trade-cli") not in sys.path:
+    sys.path.insert(0, str(root / "india-trade-cli"))
+
+from market.quotes import get_quote as get_broker_quote
 
 log = logging.getLogger("orchestrator.market_data")
 
@@ -144,15 +153,32 @@ def get_nifty_level() -> dict:
 
 # ── Multi-source fetcher ─────────────────────────────────────
 
-def fetch_quote(symbol: str, prefer: str = "yfinance") -> dict:
+def fetch_quote(symbol: str, prefer: str = "kite") -> dict:
     """
     Fetch a quote with automatic fallback.
     prefer: 'kite' or 'yfinance'
     """
-    if prefer == "kite":
-        # Try Kite first, fall back to yfinance
-        # Kite data comes through india-trade-cli's broker layer
-        data = get_stock_data_yfinance(symbol)
-        return data
-    else:
-        return get_stock_data_yfinance(symbol)
+    # 1. Try Live Broker (Kite/Fyers) via india-trade-cli
+    try:
+        # Standardize symbol for broker: "NSE:RELIANCE"
+        broker_sym = symbol if ":" in symbol else f"NSE:{symbol}"
+        quotes = get_broker_quote([broker_sym])
+        
+        if broker_sym in quotes:
+            q = quotes[broker_sym]
+            return {
+                "status": "ok",
+                "symbol": symbol,
+                "source": "broker",
+                "ltp": q.last_price,
+                "open": q.open,
+                "high": q.high,
+                "low": q.low,
+                "volume": q.volume,
+                "change_pct": q.change_pct,
+            }
+    except Exception as e:
+        log.debug(f"Broker quote failed for {symbol}: {e}")
+
+    # 2. Fallback to yfinance
+    return get_stock_data_yfinance(symbol)
