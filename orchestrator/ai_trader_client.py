@@ -32,14 +32,16 @@ class AITraderClient:
         
         try:
             resp = requests.post(login_url, json=payload, timeout=10)
-            if resp.status_code == 200 and resp.json().get("success"):
+            if resp.status_code == 200:
                 data = resp.json()
-                self.token = data.get("token")
-                self.agent_id = data.get("agent_id")
-                logger.info(f"Successfully logged into AI-Trader platform. Agent ID: {self.agent_id}")
-            else:
-                logger.info(f"Login failed (perhaps new agent), attempting registration...")
-                self._register()
+                if data.get("token") or data.get("success"):
+                    self.token = data.get("token")
+                    self.agent_id = data.get("agent_id")
+                    logger.info(f"Successfully logged into AI-Trader platform. Agent ID: {self.agent_id}")
+                    return
+            
+            logger.info(f"Login failed (perhaps new agent), attempting registration...")
+            self._register()
         except Exception as e:
             logger.error(f"Error during AI-Trader auth: {e}")
 
@@ -52,13 +54,14 @@ class AITraderClient:
         }
         try:
             resp = requests.post(register_url, json=payload, timeout=10)
-            if resp.status_code == 200 and resp.json().get("success"):
+            if resp.status_code in (200, 201):
                 data = resp.json()
-                self.token = data.get("token")
-                self.agent_id = data.get("agent_id")
-                logger.info(f"Successfully registered on AI-Trader platform. Agent ID: {self.agent_id}")
-            else:
-                logger.error(f"Registration failed: {resp.text}")
+                if data.get("token") or data.get("success"):
+                    self.token = data.get("token")
+                    self.agent_id = data.get("agent_id")
+                    logger.info(f"Successfully registered on AI-Trader platform. Agent ID: {self.agent_id}")
+                    return
+            logger.error(f"Registration failed: {resp.text}")
         except Exception as e:
             logger.error(f"Error during AI-Trader registration: {e}")
 
