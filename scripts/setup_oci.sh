@@ -121,15 +121,18 @@ WORK_DIR="${HOME}/Vibe_trading"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-if [ ! -d "core-engine" ]; then
+if [ ! -d "core-engine/.git" ]; then
+    rm -rf core-engine
     git clone https://github.com/HKUDS/Vibe-Trading.git core-engine
 fi
 
-if [ ! -d "india-trade-cli" ]; then
+if [ ! -d "india-trade-cli/.git" ]; then
+    rm -rf india-trade-cli
     git clone https://github.com/hopit-ai/india-trade-cli.git india-trade-cli
 fi
 
-if [ ! -d "kite-mcp" ]; then
+if [ ! -d "kite-mcp/.git" ]; then
+    rm -rf kite-mcp
     git clone https://github.com/zerodha/kite-mcp-server.git kite-mcp
 fi
 
