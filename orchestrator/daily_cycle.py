@@ -309,11 +309,11 @@ def phase_execute(cfg: Config) -> dict:
         # Sync the trade to AI-Trader
         if ai_client:
             # BUG-05 FIX: entry_price is never set by analysis phase;
-            # pass None instead of a misleading 0.0
+            # pass 0.0 instead of None since the API strictly requires a float
             ai_client.sync_external_trade(
                 action="buy", # simplified intent
                 symbol=symbol,
-                price=signal.get("entry_price") or None,
+                price=signal.get("entry_price") or 0.0,
                 quantity=1, 
                 content=f"{mode} trade for {symbol} via Vibe India Agent"
             )
