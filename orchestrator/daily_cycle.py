@@ -979,7 +979,8 @@ def run_daemon(cfg: Config) -> None:
     log.info(f"   Mode: {cfg.trading.mode}")
     log.info(f"   Capital: ₹{cfg.trading.total_capital:,.0f}")
     log.info(f"   Universe: {cfg.trading.stock_universe}")
-    log.info(f"   LLM: {cfg.llm.primary_provider}/{cfg.llm.primary_model}")
+    active_llm = get_active_llm_config(cfg)
+    log.info(f"   LLM (Active): {active_llm['provider']} ({active_llm['model']})")
 
     ai_client = _get_ai_client(cfg)
     if ai_client:
