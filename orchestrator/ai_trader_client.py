@@ -28,7 +28,7 @@ class AITraderClient:
     def _authenticate(self):
         """Attempts to login. If login fails, attempts to register."""
         login_url = f"{BASE_URL}/claw/agents/login"
-        payload = {"email": self.email, "password": self.password}
+        payload = {"name": self.agent_name, "password": self.password}
         
         try:
             resp = requests.post(login_url, json=payload, timeout=10)
