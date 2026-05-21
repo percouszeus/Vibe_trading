@@ -1016,7 +1016,8 @@ def run_daemon(cfg: Config) -> None:
             try:
                 broker = get_broker()
                 if broker.is_authenticated():
-                    log.info(f"Broker already connected: {broker.broker}")
+                    broker_name = getattr(broker, 'broker', 'mock broker')
+                    log.info(f"Broker already connected: {broker_name}")
                     return
             except RuntimeError:
                 pass  # No broker registered yet
