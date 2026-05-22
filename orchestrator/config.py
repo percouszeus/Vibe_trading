@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+_active_llm_cache = None
+
 from dotenv import load_dotenv
 
 # Load .env from project root
@@ -237,6 +239,10 @@ def get_active_llm_config(cfg: Config) -> dict:
     import logging
     logger = logging.getLogger("orchestrator")
 
+    global _active_llm_cache
+    if _active_llm_cache is not None:
+        return _active_llm_cache
+
     # 1. NVIDIA NIM — best quality (70B model), free tier available
     if cfg.llm.nim_api_key and cfg.llm.nim_api_key.strip():
         try:
@@ -247,12 +253,13 @@ def get_active_llm_config(cfg: Config) -> dict:
                 max_tokens=5,
                 timeout=4.0
             )
-            return {
+            _active_llm_cache = {
                 "provider": "nim",
                 "base_url": cfg.llm.nim_base_url,
                 "api_key": cfg.llm.nim_api_key,
                 "model": cfg.llm.nim_model,
             }
+            return _active_llm_cache
         except Exception as e:
             logger.warning(f"NVIDIA NIM validation failed ({e}), trying OpenRouter fallback...")
 
@@ -266,19 +273,21 @@ def get_active_llm_config(cfg: Config) -> dict:
                 max_tokens=5,
                 timeout=4.0
             )
-            return {
+            _active_llm_cache = {
                 "provider": "openrouter",
                 "base_url": cfg.llm.openrouter_base_url,
                 "api_key": cfg.llm.openrouter_api_key,
                 "model": cfg.llm.openrouter_model,
             }
+            return _active_llm_cache
         except Exception as e:
             logger.warning(f"OpenRouter validation failed ({e}), trying local Ollama fallback...")
 
     # 3. Ollama — local, no API key needed, but must be running
-    return {
+    _active_llm_cache = {
         "provider": "ollama",
         "base_url": cfg.llm.primary_base_url,
         "api_key": "ollama",
         "model": cfg.llm.primary_model,
     }
+    return _active_llm_cache
