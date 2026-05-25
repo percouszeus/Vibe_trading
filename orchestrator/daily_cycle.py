@@ -29,14 +29,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+# Setup sys.path to ensure 'orchestrator' and 'india-trade-cli' are importable
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+CLI_PATH = PROJECT_ROOT / "india-trade-cli"
+if str(CLI_PATH) not in sys.path:
+    sys.path.insert(0, str(CLI_PATH))
+
 import threading
 from orchestrator.config import load_config, Config, get_active_llm_config
 from orchestrator.ai_trader_client import AITraderClient
-
-# ── Inject india-trade-cli into path ────────────────────────
-CLI_PATH = Path(__file__).parent.parent / "india-trade-cli"
-if str(CLI_PATH) not in sys.path:
-    sys.path.append(str(CLI_PATH))
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -253,11 +257,69 @@ def phase_analysis(cfg: Config) -> dict:
     return result
 
 
+def _place_strategy_legs_automated(broker: Any, strategy: Any, symbol: str) -> list[dict]:
+    """Automated order placement for all strategy legs in the background."""
+    placed_legs = []
+    for leg in strategy.legs:
+        action = leg.get("action", "BUY")
+        opt_type = leg.get("type", "")
+        strike = leg.get("strike", 0)
+        lots = leg.get("lots", 1)
+        lot_size = leg.get("lot_size", 1)
+
+        if opt_type in ("CE", "PE"):
+            from market.events import get_expiry_dates
+            try:
+                expiry = get_expiry_dates().monthly
+                exp_compact = expiry.replace("-", "").replace("20", "")[2:]
+            except Exception:
+                exp_compact = "25MAR"
+            trade_symbol = f"{symbol}{exp_compact}{int(strike)}{opt_type}"
+            qty = lots * lot_size
+        else:
+            trade_symbol = symbol
+            qty = leg.get("qty", 1)
+
+        exchange = "NFO" if opt_type in ("CE", "PE") else "NSE"
+        
+        from brokers.base import OrderRequest
+        req = OrderRequest(
+            symbol=trade_symbol,
+            exchange=exchange,
+            transaction_type=action,
+            quantity=qty,
+            order_type="MARKET",
+            product="CNC" if opt_type == "" else "NRML",
+        )
+
+        try:
+            resp = broker.place_order(req)
+            log.info(f"  ✅ Placed leg: {action} {qty} {trade_symbol} - Status: {resp.status}")
+            placed_legs.append({
+                "symbol": trade_symbol,
+                "action": action,
+                "qty": qty,
+                "status": resp.status,
+                "price": resp.average_price or 0.0
+            })
+        except Exception as e:
+            log.error(f"  ❌ Failed to place leg {action} {trade_symbol}: {e}")
+            placed_legs.append({
+                "symbol": trade_symbol,
+                "action": action,
+                "qty": qty,
+                "status": "FAILED",
+                "error": str(e)
+            })
+    return placed_legs
+
+
 def phase_execute(cfg: Config) -> dict:
     """
     09:30 IST — Paper order execution.
-    Takes signals from analysis phase and places paper orders
-    via the india-trade-cli paper broker.
+    Takes signals from analysis phase, parses Fund Manager verdicts,
+    queries optimal strategies, and automatically executes trade legs
+    via the active broker.
     """
     log.info("═══ PHASE: Paper Order Execution ═══")
     result = {"phase": "execute", "orders": [], "status": "started"}
@@ -291,32 +353,103 @@ def phase_execute(cfg: Config) -> dict:
     mode = cfg.trading.mode.upper()
     ai_client = _get_ai_client(cfg)
     
+    # Ensure active session
+    _login_if_needed()
+    
+    from brokers.session import get_broker
+    try:
+        broker = get_broker()
+    except Exception as e:
+        log.error(f"Failed to get active broker session: {e}")
+        result["status"] = "error"
+        result["error"] = f"No broker session: {e}"
+        journal_entry("execute", result)
+        return result
+
+    from agent.schema_parser import parse_synthesis_output
+    from market.quotes import get_ltp
+    from engine.strategy import recommend
+
     for signal in signals:
         if signal.get("status") != "success":
             continue
 
         symbol = signal["symbol"]
-        log.info(f"Evaluating {mode} order for {symbol}...")
+        output = signal["output"]
+        log.info(f"Evaluating automated {mode} order for {symbol}...")
 
-        # The orders are placed by india-trade-cli
-        # If TRADING_MODE=LIVE, it will place real orders on Zerodha/Fyers
-        result["orders"].append({
-            "symbol": symbol,
-            "action": "executed" if mode == "LIVE" else "evaluated",
-            "mode": mode,
-        })
+        # Parse final synthesis verdict
+        parsed = parse_synthesis_output(output)
+        raw_verdict = parsed.verdict
         
-        # Sync the trade to AI-Trader
-        if ai_client:
-            # BUG-05 FIX: entry_price is never set by analysis phase;
-            # pass 0.0 instead of None since the API strictly requires a float
-            ai_client.sync_external_trade(
-                action="buy", # simplified intent
+        if raw_verdict in ("STRONG_BUY", "BUY"):
+            view = "BULLISH"
+        elif raw_verdict in ("STRONG_SELL", "SELL"):
+            view = "BEARISH"
+        else:
+            log.info(f"  ➖ Verdict for {symbol} is {raw_verdict} (HOLD) — skipping trade.")
+            continue
+
+        # Get current spot price
+        try:
+            spot = get_ltp(f"NSE:{symbol}")
+        except Exception:
+            try:
+                spot = get_ltp(f"NSE:{symbol} 50")
+            except Exception as e:
+                log.warning(f"  ⚠️ Could not fetch spot price for {symbol}: {e} — skipping trade.")
+                continue
+
+        log.info(f"  📈 Recommended View: {view} (Spot: ₹{spot:,.2f})")
+        
+        # Get optimal strategy recommendation
+        try:
+            report = recommend(
                 symbol=symbol,
-                price=signal.get("entry_price") or 0.0,
-                quantity=1, 
-                content=f"{mode} trade for {symbol} via Vibe India Agent"
+                view=view,
+                spot=spot,
+                capital=cfg.trading.total_capital,
+                risk_pct=cfg.trading.risk_pct
             )
+            
+            if not report.strategies:
+                log.warning(f"  ⚠️ No recommended strategies found for {symbol} {view}")
+                continue
+                
+            selected_strategy = report.strategies[0]
+            log.info(f"  Selected Strategy: {selected_strategy.name} ({selected_strategy.description})")
+            
+            # Place order legs automatically
+            legs = _place_strategy_legs_automated(broker, selected_strategy, symbol)
+            
+            order_data = {
+                "symbol": symbol,
+                "strategy": selected_strategy.name,
+                "view": view,
+                "legs": legs,
+                "action": "executed",
+                "mode": mode,
+            }
+            result["orders"].append(order_data)
+            
+            # Sync the trade to AI-Trader social network in strict UTC
+            if ai_client:
+                try:
+                    from datetime import timezone
+                    utc_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ai_client.sync_external_trade(
+                        action="buy" if view == "BULLISH" else "sell",
+                        symbol=symbol,
+                        price=spot,
+                        quantity=1,
+                        content=f"{mode} {selected_strategy.name} trade for {symbol} via Vibe India",
+                        executed_at=utc_now
+                    )
+                except Exception as sync_err:
+                    log.warning(f"  ⚠️ Failed to sync trade to AI-Trader: {sync_err}")
+                    
+        except Exception as e:
+            log.error(f"  ❌ Error executing strategy recommendation for {symbol}: {e}")
 
     result["status"] = "complete"
     result["order_count"] = len(result["orders"])
@@ -1086,6 +1219,22 @@ def run_daemon(cfg: Config) -> None:
         current_time = now.strftime("%H:%M")
         today = now.strftime("%Y-%m-%d")
 
+        # Skip executing the schedule on weekends (Saturday=5, Sunday=6)
+        if now.weekday() >= 5:
+            weekend_key = f"{today}_weekend_skip"
+            if weekend_key not in executed_today:
+                log.info(f"📅 Weekend detected ({now.strftime('%A')}) — skipping all scheduled phases for today.")
+                executed_today.add(weekend_key)
+            
+            # Check for day reset to clear state at midnight
+            if today != last_reset_date:
+                log.info(f"New day (weekend): {today} — resetting schedule")
+                executed_today.clear()
+                last_reset_date = today
+            
+            time.sleep(60)  # Sleep longer on weekends
+            continue
+
         for sched_time, phase_name, phase_fn in SCHEDULE:
             key = f"{today}_{phase_name}"
             if key not in executed_today and current_time >= sched_time:
@@ -1097,7 +1246,7 @@ def run_daemon(cfg: Config) -> None:
                     journal_entry(phase_name, {
                         "status": "crashed",
                         "error": str(e),
-                    })
+                     })
                 executed_today.add(key)
 
         # BUG-09 FIX: Clear executed set exactly once per day using date tracking
