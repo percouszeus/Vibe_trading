@@ -26,44 +26,44 @@ An autonomous AI trading system that:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                         OCI Free Tier ARM VM                              │
+│                         OCI Free Tier ARM VM                             │
 │                   (4 OCPU · 24 GB RAM · Ubuntu 22.04)                    │
 ├──────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │                    Orchestrator (daily_cycle.py)                     │  │
-│  │                    10-Phase State Machine Daemon                     │  │
-│  └─────────┬───────────────────────┬────────────────────┬──────────────┘  │
-│            │                       │                    │                  │
-│  ┌─────────▼──────────┐  ┌────────▼────────┐  ┌───────▼──────────────┐  │
-│  │  india-trade-cli   │  │ Capital Manager  │  │   Logic Auditor      │  │
-│  │  7-Agent Pipeline  │  │  50/25/25 Split  │  │  StateAuditor engine │  │
-│  │                    │  │  Kelly Sizing     │  │  Gap detection       │  │
-│  │ • TechnicalAnalyst │  │  Margin tracking  │  │  Silent failure logs │  │
-│  │ • FundamentalAnalyst│  └─────────────────┘  └──────────────────────┘  │
-│  │ • OptionsAnalyst   │                                                    │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │                    Orchestrator (daily_cycle.py)                    │ │
+│  │                    10-Phase State Machine Daemon                    │ │
+│  └─────────┬───────────────────────┬────────────────────┬──────────────┘ │
+│            │                       │                    │                │
+│  ┌─────────▼──────────┐  ┌────────▼────────┐  ┌───────▼──────────────┐   │
+│  │  india-trade-cli   │  │ Capital Manager │  │   Logic Auditor      │   │
+│  │  7-Agent Pipeline  │  │  50/25/25 Split │  │  StateAuditor engine │   │
+│  │                    │  │  Kelly Sizing   │  │  Gap detection       │   │
+│  │ • TechnicalAnalyst │  │  Margin tracking│  │  Silent failure logs │   │
+│  │ • FundamentalAnalyst│ └─────────────────┘  └──────────────────────┘   │ 
+│  │ • OptionsAnalyst   │                                                  │
 │  │ • NewsMacroAnalyst │  ┌─────────────────┐  ┌──────────────────────┐   │
 │  │ • SentimentAnalyst │  │   PaperBroker   │  │  System Monitor      │   │
-│  │ • BullResearcher   │  │  Persistent P&L  │  │  API usage tracker   │   │
-│  │ • BearResearcher   │  │  Real margin sim │  │  Audit log analyzer  │   │
-│  │ • FundManager      │  │  Order fills     │  └──────────────────────┘   │
-│  └────────────────────┘  └─────────────────┘                              │
-│                                                                            │
+│  │ • BullResearcher   │  │  Persistent P&L │  │  API usage tracker   │   │
+│  │ • BearResearcher   │  │  Real margin sim│  │  Audit log analyzer  │   │
+│  │ • FundManager      │  │  Order fills    │  └──────────────────────┘   │
+│  └────────────────────┘  └─────────────────┘                             │
+│                                                                          │
 ├──────────────────────────────────────────────────────────────────────────┤
-│                         LLM Failover Chain                                 │
-│                                                                            │
+│                         LLM Failover Chain                               │
+│                                                                          │
 │  ① NVIDIA NIM: openai/gpt-oss-120b          (primary, 35 req/min)        │
-│      ↓ fails                                                               │
-│  ② NVIDIA NIM: nvidia/nemotron-3-super-120b  (failover 1, reasoning)      │
-│      ↓ fails                                                               │
-│  ③ NVIDIA NIM: minimaxai/minimax-m2.7        (failover 2, lightweight)    │
-│      ↓ fails                                                               │
-│  ④ OpenRouter:  deepseek/deepseek-r1         (last resort, 50 req/day)    │
-│                 [rate-limited: 15/min, 50/day — persistent quota tracker] │
+│      ↓ fails                                                             │
+│  ② NVIDIA NIM: nvidia/nemotron-3-super-120b  (failover 1, reasoning)     │
+│      ↓ fails                                                             │
+│  ③ NVIDIA NIM: minimaxai/minimax-m2.7        (failover 2, lightweight)   │
+│      ↓ fails                                                             │
+│  ④ OpenRouter:  deepseek/deepseek-r1         (last resort, 50 req/day)   │
+│                 [rate-limited: 15/min, 50/day — persistent quota tracker]│
 ├──────────────────────────────────────────────────────────────────────────┤
-│                           Market Data Layer                                │
-│    Zerodha Kite Connect  ·  yfinance fallback  ·  NSE options chain       │
-│    FII/DII flows  ·  Market breadth  ·  Bulk/block deals  ·  Events       │
+│                           Market Data Layer                              │
+│    Zerodha Kite Connect  ·  yfinance fallback  ·  NSE options chain      │
+│    FII/DII flows  ·  Market breadth  ·  Bulk/block deals  ·  Events      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
