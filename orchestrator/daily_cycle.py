@@ -1207,12 +1207,12 @@ def run_daemon(cfg: Config) -> None:
                     except Exception:
                         log.warning("WebSocket start failed — will use REST fallback")
             else:
-                # Fall back to mock broker so the system can still run in paper mode
-                from brokers.mock import MockBrokerAPI
-                mock = MockBrokerAPI()
+                # Fall back to PaperBroker so the system can actually execute paper trades and track P&L
+                from engine.paper import PaperBroker
+                mock = PaperBroker(capital=cfg.trading.total_capital)
                 mock.complete_login()
                 register_broker("mock", mock, primary=True, role="both")
-                log.warning("No broker credentials found — using MockBrokerAPI (paper mode)")
+                log.warning("No broker credentials found — using PaperBroker (paper mode)")
 
         except Exception as e:
             log.error(f"Broker connection failed: {e}")
