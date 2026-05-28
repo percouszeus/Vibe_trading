@@ -13,6 +13,9 @@ import re
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 JOURNAL_DIR = Path.home() / ".trading_platform" / "journals"
+AUDIT_DIR = Path.home() / ".trading_platform" / "audit_logs"
+
+import json
 
 def analyze_today_logs():
     # Force UTF-8 for Windows console
@@ -63,5 +66,55 @@ def analyze_today_logs():
     if not errors and not warnings:
         print("\nAll systems operating nominally with zero errors/warnings.")
         
+def analyze_audit_logs():
+    today = datetime.now(ZoneInfo('Asia/Kolkata')).strftime("%Y-%m-%d")
+    audit_file = AUDIT_DIR / f"state_{today}.audit"
+    
+    if not audit_file.exists():
+        return
+        
+    print(f"\n=== Vibe Trading State Audit Report ({today}) ===")
+    
+    phases_started = set()
+    phases_completed = set()
+    signals_analyzed = 0
+    signals_executed = 0
+    
+    try:
+        with open(audit_file, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    node = entry.get("logic_node", "")
+                    ctx = entry.get("context", {})
+                    
+                    if node == "SNAPSHOT_START":
+                        phases_started.add(entry.get("phase"))
+                    elif node == "SNAPSHOT_END":
+                        phases_completed.add(entry.get("phase"))
+                    elif node == "batch_complete":
+                        signals_analyzed = ctx.get("analyzed_count", 0)
+                    elif node == "signal_executed":
+                        signals_executed += 1
+                except json.JSONDecodeError:
+                    continue
+                    
+        print(f"Phases Started: {', '.join(phases_started) or 'None'}")
+        print(f"Phases Completed: {', '.join(phases_completed) or 'None'}")
+        
+        gaps = phases_started - phases_completed
+        if gaps:
+            print(f"\n[!] LOGIC GAP DETECTED: Phases started but never finished: {', '.join(gaps)}")
+            
+        print(f"\nSignals Analyzed: {signals_analyzed}")
+        print(f"Signals Executed: {signals_executed}")
+        
+        if signals_analyzed > 0 and signals_executed == 0:
+            print("[!] LOGIC WARNING: Analysis completed but 0 signals were executed. Check LLM parsing logic or budget limits.")
+            
+    except Exception as e:
+        print(f"Failed to parse audit logs: {e}")
+
 if __name__ == "__main__":
     analyze_today_logs()
+    analyze_audit_logs()

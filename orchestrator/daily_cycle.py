@@ -41,6 +41,7 @@ if str(CLI_PATH) not in sys.path:
 import threading
 from orchestrator.config import load_config, Config, get_active_llm_config
 from orchestrator.ai_trader_client import AITraderClient
+from orchestrator.audit import auditor
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -166,6 +167,7 @@ def phase_premarket(cfg: Config) -> dict:
     """
     log.info("═══ PHASE: Pre-Market Scan ═══")
     result = {"phase": "premarket", "status": "started"}
+    auditor.snapshot("premarket", "start", result)
 
     try:
         # Use india-trade-cli's morning-brief command
@@ -183,6 +185,7 @@ def phase_premarket(cfg: Config) -> dict:
         result["stderr"] = proc.stderr[-500:] if proc.stderr else ""
         result["returncode"] = proc.returncode
         result["status"] = "success" if proc.returncode == 0 else "error"
+        auditor.log_step("premarket", "morning_brief_cli", {"returncode": proc.returncode, "stdout_len": len(proc.stdout) if proc.stdout else 0})
 
         log.info(f"Morning brief completed: exit={proc.returncode}")
 
@@ -197,6 +200,7 @@ def phase_premarket(cfg: Config) -> dict:
             env=_build_env(cfg),
         )
         result["screen_output"] = screen_proc.stdout[-2000:] if screen_proc.stdout else ""
+        auditor.log_step("premarket", "market_screen", {"returncode": screen_proc.returncode, "stdout_len": len(screen_proc.stdout) if screen_proc.stdout else 0})
         log.info(f"Market screen completed: exit={screen_proc.returncode}")
 
     except subprocess.TimeoutExpired:
@@ -207,6 +211,7 @@ def phase_premarket(cfg: Config) -> dict:
         result["error"] = str(e)
         log.error(f"Morning brief failed: {e}")
 
+    auditor.snapshot("premarket", "end", result)
     journal_entry("premarket", result)
     return result
 
@@ -219,6 +224,7 @@ def phase_analysis(cfg: Config) -> dict:
     """
     log.info("═══ PHASE: Market Analysis ═══")
     result = {"phase": "analysis", "signals": [], "status": "started"}
+    auditor.snapshot("analysis", "start", result)
 
     # Get stock universe
     stocks = _get_stock_universe(cfg.trading.stock_universe)
@@ -259,6 +265,8 @@ def phase_analysis(cfg: Config) -> dict:
 
     result["status"] = "complete"
     result["analyzed_count"] = len(result["signals"])
+    auditor.log_step("analysis", "batch_complete", {"analyzed_count": result["analyzed_count"], "symbols": [s["symbol"] for s in result["signals"]]})
+    auditor.snapshot("analysis", "end", result)
     journal_entry("analysis", result)
     return result
 
@@ -314,9 +322,11 @@ def _place_strategy_legs_automated(broker: Any, strategy: Any, symbol: str) -> l
                 "symbol": trade_symbol,
                 "action": action,
                 "qty": qty,
-                "status": "FAILED",
+                "status": "ERROR",
                 "error": str(e)
             })
+    
+    auditor.log_step("execute", "strategy_legs_placed", {"symbol": symbol, "legs": placed_legs})
     return placed_legs
 
 
@@ -329,6 +339,7 @@ def phase_execute(cfg: Config) -> dict:
     """
     log.info("═══ PHASE: Paper Order Execution ═══")
     result = {"phase": "execute", "orders": [], "status": "started"}
+    auditor.snapshot("execute", "start", result)
 
     # Read today's journal to get analysis signals
     today_file = JOURNAL_DIR / f"{datetime.now():%Y-%m-%d}.jsonl"
@@ -437,6 +448,7 @@ def phase_execute(cfg: Config) -> dict:
                 "mode": mode,
             }
             result["orders"].append(order_data)
+            auditor.log_step("execute", "signal_executed", order_data)
             
             # Sync the trade to AI-Trader social network in strict UTC
             if ai_client:
@@ -458,7 +470,8 @@ def phase_execute(cfg: Config) -> dict:
             log.error(f"  ❌ Error executing strategy recommendation for {symbol}: {e}")
 
     result["status"] = "complete"
-    result["order_count"] = len(result["orders"])
+    result["executed_count"] = len(result["orders"])
+    auditor.snapshot("execute", "end", result)
     journal_entry("execute", result)
     return result
 
