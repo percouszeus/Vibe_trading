@@ -35,7 +35,7 @@ An autonomous AI trading system that:
 │  │                    10-Phase State Machine Daemon                    │ │
 │  └─────────┬───────────────────────┬────────────────────┬──────────────┘ │
 │            │                       │                    │                │
-│  ┌─────────▼───────────┐  ┌────────▼────────┐  ┌───────▼──────────────┐  │
+│  ┌─────────▼───────────┐  ┌────────▼────────┐  ┌────────▼─────────────┐  │
 │  │  india-trade-cli    │  │ Capital Manager │  │   Logic Auditor      │  │
 │  │  7-Agent Pipeline   │  │  50/25/25 Split │  │  StateAuditor engine │  │
 │  │                     │  │  Kelly Sizing   │  │  Gap detection       │  │
