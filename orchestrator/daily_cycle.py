@@ -47,12 +47,18 @@ from orchestrator.ai_trader_client import AITraderClient
 LOG_DIR = Path.home() / ".trading_platform" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+import sys
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr.encoding.lower() != 'utf-8':
+    sys.stderr.reconfigure(encoding='utf-8')
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     handlers=[
-        logging.FileHandler(LOG_DIR / f"daily_{datetime.now():%Y%m%d}.log"),
-        logging.StreamHandler(),
+        logging.FileHandler(LOG_DIR / f"daily_{datetime.now():%Y%m%d}.log", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
     ],
 )
 log = logging.getLogger("orchestrator")

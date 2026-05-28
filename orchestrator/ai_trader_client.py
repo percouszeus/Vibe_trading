@@ -3,8 +3,11 @@ import time
 import json
 import threading
 import requests
+import urllib3
 from typing import List, Dict, Any, Optional
 import logging
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("AITraderClient")
 
@@ -32,7 +35,7 @@ class AITraderClient:
         
         for attempt in range(3):
             try:
-                resp = requests.post(login_url, json=payload, timeout=10)
+                resp = requests.post(login_url, json=payload, timeout=10, verify=False)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("token") or data.get("success"):
@@ -65,7 +68,7 @@ class AITraderClient:
             "password": self.password
         }
         try:
-            resp = requests.post(register_url, json=payload, timeout=10)
+            resp = requests.post(register_url, json=payload, timeout=10, verify=False)
             if resp.status_code in (200, 201):
                 data = resp.json()
                 if data.get("token") or data.get("success"):
@@ -95,7 +98,7 @@ class AITraderClient:
             "tags": tags or ["strategy", "automated"]
         }
         try:
-            resp = requests.post(url, headers=self.headers, json=payload, timeout=10)
+            resp = requests.post(url, headers=self.headers, json=payload, timeout=10, verify=False)
             if resp.status_code == 200:
                 logger.info(f"Successfully published strategy: {title}")
                 return resp.json()
@@ -124,7 +127,7 @@ class AITraderClient:
         }
         
         try:
-            resp = requests.post(url, headers=self.headers, json=payload, timeout=10)
+            resp = requests.post(url, headers=self.headers, json=payload, timeout=10, verify=False)
             if resp.status_code == 200:
                 logger.info(f"Successfully synced trade: {action} {quantity} {symbol} @ {price}")
                 return resp.json()
@@ -143,7 +146,7 @@ class AITraderClient:
                 continue
                 
             try:
-                resp = requests.post(f"{BASE_URL}/claw/agents/heartbeat", headers=self.headers, timeout=15)
+                resp = requests.post(f"{BASE_URL}/claw/agents/heartbeat", headers=self.headers, timeout=15, verify=False)
                 if resp.status_code == 200:
                     data = resp.json()
                     
