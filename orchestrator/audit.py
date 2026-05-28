@@ -12,25 +12,31 @@ from pathlib import Path
 from typing import Any, Dict
 
 AUDIT_DIR = Path.home() / ".trading_platform" / "audit_logs"
-AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 
 class StateAuditor:
-    def __init__(self):
-        self._today = datetime.now().strftime("%Y-%m-%d")
-        self._audit_file = AUDIT_DIR / f"state_{self._today}.audit"
+    def _get_audit_file(self) -> Path:
+        today = datetime.now().strftime("%Y-%m-%d")
+        file_path = AUDIT_DIR / f"state_{today}.audit"
+        if not AUDIT_DIR.exists():
+            AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        return file_path
 
     def log_step(self, phase: str, logic_node: str, context: Dict[str, Any]) -> None:
         """
         Logs an intermediate state trace.
         """
-        entry = {
-            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
-            "phase": phase,
-            "logic_node": logic_node,
-            "context": context
-        }
-        with open(self._audit_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+        try:
+            entry = {
+                "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+                "phase": phase,
+                "logic_node": logic_node,
+                "context": context
+            }
+            audit_file = self._get_audit_file()
+            with open(audit_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        except Exception:
+            pass  # Silent failure is preferred for an audit logger over crashing the system
 
     def snapshot(self, phase: str, tag: str, state: Dict[str, Any]) -> None:
         """

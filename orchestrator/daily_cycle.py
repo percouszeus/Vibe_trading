@@ -156,6 +156,83 @@ class QuoteSyncer:
 # ── Phase Implementations ────────────────────────────────────
 
 
+def _login_if_needed(cfg: Config):
+    """Ensure broker session is active and WebSocket is running.
+    BUG-02 FIX: Use non-interactive broker setup — never call the
+    interactive login() flow which would hang in daemon mode (no TTY).
+    """
+    try:
+        import os
+        from brokers.session import register_broker, get_broker, _brokers
+        from market.websocket import ws_manager
+
+        # Check if already connected
+        try:
+            broker = get_broker()
+            if broker.is_authenticated():
+                broker_name = getattr(broker, 'broker', 'mock broker')
+                log.info(f"Broker already connected: {broker_name}")
+                return
+        except RuntimeError:
+            pass  # No broker registered yet
+
+        # Non-interactive: create broker from env vars and saved tokens
+        kite_key = os.environ.get("KITE_API_KEY", cfg.broker.kite_api_key)
+        kite_secret = os.environ.get("KITE_API_SECRET", cfg.broker.kite_api_secret)
+        fyers_app_id = os.environ.get("FYERS_APP_ID", "")
+        fyers_secret = os.environ.get("FYERS_SECRET_KEY", "")
+
+        broker = None
+        broker_key = None
+
+        # Try Zerodha first (if credentials exist)
+        if kite_key and kite_key != "your_kite_api_key_here":
+            try:
+                from brokers.zerodha import ZerodhaAPI
+                b = ZerodhaAPI(api_key=kite_key, api_secret=kite_secret or "")
+                if b.is_authenticated():
+                    broker = b
+                    broker_key = "zerodha"
+                    log.info("Zerodha: resumed saved session")
+            except Exception as e:
+                log.warning(f"Zerodha auto-login failed: {e}")
+
+        # Try Fyers as fallback
+        if broker is None and fyers_app_id:
+            try:
+                from brokers.fyers import FyersAPI
+                b = FyersAPI(app_id=fyers_app_id, secret_key=fyers_secret)
+                if b.is_authenticated():
+                    broker = b
+                    broker_key = "fyers"
+                    log.info("Fyers: resumed saved session")
+            except Exception as e:
+                log.warning(f"Fyers auto-login failed: {e}")
+
+        # Register the broker if we found one
+        if broker and broker_key:
+            register_broker(broker_key, broker, primary=True, role="both")
+            log.info(f"Connected to {broker.broker}")
+
+            # Start WebSocket if not running
+            if not ws_manager.connected:
+                try:
+                    from brokers.session import _start_websocket
+                    _start_websocket(broker)
+                except Exception:
+                    log.warning("WebSocket start failed — will use REST fallback")
+        else:
+            # Fall back to PaperBroker so the system can actually execute paper trades and track P&L
+            from engine.paper import PaperBroker
+            mock = PaperBroker(capital=cfg.trading.total_capital)
+            mock.complete_login()
+            register_broker("mock", mock, primary=True, role="both")
+            log.warning("No broker credentials found — using PaperBroker (paper mode)")
+
+    except Exception as e:
+        log.error(f"Broker connection failed: {e}")
+
+
 def phase_premarket(cfg: Config) -> dict:
     """
     08:45 IST — Pre-market scan.
@@ -371,7 +448,7 @@ def phase_execute(cfg: Config) -> dict:
     ai_client = _get_ai_client(cfg)
     
     # Ensure active session
-    _login_if_needed()
+    _login_if_needed(cfg)
     
     from brokers.session import get_broker
     try:
@@ -1154,84 +1231,9 @@ def run_daemon(cfg: Config) -> None:
     syncer = QuoteSyncer(interval=5)
     syncer.start()
 
-    def _login_if_needed():
-        """Ensure broker session is active and WebSocket is running.
-        BUG-02 FIX: Use non-interactive broker setup — never call the
-        interactive login() flow which would hang in daemon mode (no TTY).
-        """
-        try:
-            import os
-            from brokers.session import register_broker, get_broker, _brokers
-            from market.websocket import ws_manager
-
-            # Check if already connected
-            try:
-                broker = get_broker()
-                if broker.is_authenticated():
-                    broker_name = getattr(broker, 'broker', 'mock broker')
-                    log.info(f"Broker already connected: {broker_name}")
-                    return
-            except RuntimeError:
-                pass  # No broker registered yet
-
-            # Non-interactive: create broker from env vars and saved tokens
-            kite_key = os.environ.get("KITE_API_KEY", cfg.broker.kite_api_key)
-            kite_secret = os.environ.get("KITE_API_SECRET", cfg.broker.kite_api_secret)
-            fyers_app_id = os.environ.get("FYERS_APP_ID", "")
-            fyers_secret = os.environ.get("FYERS_SECRET_KEY", "")
-
-            broker = None
-            broker_key = None
-
-            # Try Zerodha first (if credentials exist)
-            if kite_key and kite_key != "your_kite_api_key_here":
-                try:
-                    from brokers.zerodha import ZerodhaAPI
-                    b = ZerodhaAPI(api_key=kite_key, api_secret=kite_secret or "")
-                    if b.is_authenticated():
-                        broker = b
-                        broker_key = "zerodha"
-                        log.info("Zerodha: resumed saved session")
-                except Exception as e:
-                    log.warning(f"Zerodha auto-login failed: {e}")
-
-            # Try Fyers as fallback
-            if broker is None and fyers_app_id:
-                try:
-                    from brokers.fyers import FyersAPI
-                    b = FyersAPI(app_id=fyers_app_id, secret_key=fyers_secret)
-                    if b.is_authenticated():
-                        broker = b
-                        broker_key = "fyers"
-                        log.info("Fyers: resumed saved session")
-                except Exception as e:
-                    log.warning(f"Fyers auto-login failed: {e}")
-
-            # Register the broker if we found one
-            if broker and broker_key:
-                register_broker(broker_key, broker, primary=True, role="both")
-                log.info(f"Connected to {broker.broker}")
-
-                # Start WebSocket if not running
-                if not ws_manager.connected:
-                    try:
-                        from brokers.session import _start_websocket
-                        _start_websocket(broker)
-                    except Exception:
-                        log.warning("WebSocket start failed — will use REST fallback")
-            else:
-                # Fall back to PaperBroker so the system can actually execute paper trades and track P&L
-                from engine.paper import PaperBroker
-                mock = PaperBroker(capital=cfg.trading.total_capital)
-                mock.complete_login()
-                register_broker("mock", mock, primary=True, role="both")
-                log.warning("No broker credentials found — using PaperBroker (paper mode)")
-
-        except Exception as e:
-            log.error(f"Broker connection failed: {e}")
 
     # Initial login
-    _login_if_needed()
+    _login_if_needed(cfg)
 
     while True:
         now = datetime.now()
@@ -1273,7 +1275,7 @@ def run_daemon(cfg: Config) -> None:
             log.info(f"New trading day: {today} — resetting schedule")
             executed_today.clear()
             last_reset_date = today
-            _login_if_needed()  # Re-login for the new trading day
+            _login_if_needed(cfg)  # Re-login for the new trading day
 
         time.sleep(30)  # Check every 30 seconds
 
