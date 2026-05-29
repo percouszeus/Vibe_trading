@@ -9,6 +9,7 @@ Evaluates performance gaps and auto-purchases improvements.
 Priorities: LLM Credits > Premium Data > Compute > Fine-tuning > Factor Data
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ class PerformanceGaps:
     data_staleness_issues: int = 0
 
 
+@exhaustive_log
 def evaluate_spending_priorities(
     ai_fund_balance: float,
     gaps: PerformanceGaps,
@@ -98,6 +100,7 @@ def evaluate_spending_priorities(
     return [p for p in priorities if p.estimated_cost <= ai_fund_balance]
 
 
+@exhaustive_log
 def auto_spend(ai_fund_balance: float, gaps: PerformanceGaps,
                auto_approve_limit: float = 500.0) -> list[dict]:
     """Auto-execute spending on auto-approved priorities."""
@@ -120,6 +123,7 @@ def auto_spend(ai_fund_balance: float, gaps: PerformanceGaps,
     return purchases
 
 
+@exhaustive_log
 def get_spending_history(days: int = 30) -> list[dict]:
     if not SPEND_LOG.exists():
         return []
@@ -133,6 +137,7 @@ def get_spending_history(days: int = 30) -> list[dict]:
     return history[-100:]
 
 
+@exhaustive_log
 def get_spending_summary() -> dict:
     history = get_spending_history(days=365)
     summary = {"total_spent": 0.0, "by_category": {}, "purchase_count": len(history)}
@@ -144,6 +149,7 @@ def get_spending_summary() -> dict:
     return summary
 
 
+@exhaustive_log
 def detect_performance_gaps() -> PerformanceGaps:
     """Detect current performance gaps by analyzing recent trade history."""
     gaps = PerformanceGaps()
@@ -178,6 +184,7 @@ def detect_performance_gaps() -> PerformanceGaps:
     return gaps
 
 
+@exhaustive_log
 def _log_purchase(purchase: dict) -> None:
     SPEND_LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(SPEND_LOG, "a") as f:

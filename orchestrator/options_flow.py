@@ -11,6 +11,7 @@ Analyzes options market data for trading signals:
   - Straddle premium for range estimation
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -56,6 +57,7 @@ class OptionsSignal:
 # ── PCR Analysis ─────────────────────────────────────────────
 
 
+@exhaustive_log
 def analyze_pcr(pcr: float) -> OptionsSignal:
     """
     Analyze Put/Call Ratio.
@@ -93,6 +95,7 @@ def analyze_pcr(pcr: float) -> OptionsSignal:
 # ── Max Pain Analysis ───────────────────────────────────────
 
 
+@exhaustive_log
 def calculate_max_pain(option_chain: list[dict], spot: float) -> float:
     """
     Calculate max pain — the strike price where total loss for
@@ -133,6 +136,7 @@ def calculate_max_pain(option_chain: list[dict], spot: float) -> float:
     return max_pain_strike
 
 
+@exhaustive_log
 def analyze_max_pain(spot: float, max_pain: float) -> OptionsSignal:
     """Analyze max pain relative to spot price."""
     diff_pct = (max_pain - spot) / spot * 100
@@ -166,6 +170,7 @@ def analyze_max_pain(spot: float, max_pain: float) -> OptionsSignal:
 # ── OI Buildup Detection ────────────────────────────────────
 
 
+@exhaustive_log
 def detect_oi_buildup(option_chain: list[dict], prev_chain: list[dict],
                       threshold_pct: float = 20.0) -> list[OptionsSignal]:
     """
@@ -216,6 +221,7 @@ def detect_oi_buildup(option_chain: list[dict], prev_chain: list[dict],
 # ── IV Analysis ──────────────────────────────────────────────
 
 
+@exhaustive_log
 def analyze_iv_percentile(iv_percentile: float) -> OptionsSignal:
     """
     Analyze IV percentile for options trading signals.
@@ -245,6 +251,7 @@ def analyze_iv_percentile(iv_percentile: float) -> OptionsSignal:
 # ── Straddle Range Estimation ────────────────────────────────
 
 
+@exhaustive_log
 def estimate_expected_range(spot: float, straddle_premium_pct: float) -> dict:
     """
     Use ATM straddle premium to estimate expected move range.
@@ -264,6 +271,7 @@ def estimate_expected_range(spot: float, straddle_premium_pct: float) -> dict:
 # ── Combined Options Intelligence ───────────────────────────
 
 
+@exhaustive_log
 def get_options_intelligence(
     spot: float, pcr: float, iv_percentile: float,
     max_pain: float, straddle_prem_pct: float,

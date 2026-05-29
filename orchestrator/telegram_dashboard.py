@@ -21,6 +21,7 @@ Commands:
   /report     — Monthly report
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ from typing import Optional
 log = logging.getLogger("orchestrator.telegram")
 
 
+@exhaustive_log
 def send_message(token: str, chat_id: str, text: str,
                  parse_mode: str = "HTML") -> bool:
     """Send a message via Telegram Bot API."""
@@ -66,6 +68,7 @@ def send_message(token: str, chat_id: str, text: str,
 # ── Report Generators ────────────────────────────────────────
 
 
+@exhaustive_log
 def format_daily_report(
     date_str: str,
     daily_pnl: float,
@@ -121,6 +124,7 @@ def format_daily_report(
     return report
 
 
+@exhaustive_log
 def format_capital_status(summary: dict) -> str:
     """Format capital status for /status command."""
     return f"""<b>💰 Capital Status</b>
@@ -147,6 +151,7 @@ def format_capital_status(summary: dict) -> str:
 """
 
 
+@exhaustive_log
 def format_ai_fund_report(balance: float, spending_summary: dict) -> str:
     """Format AI fund report for /aifund command."""
     report = f"""<b>🤖 AI Improvement Fund</b>
@@ -163,6 +168,7 @@ def format_ai_fund_report(balance: float, spending_summary: dict) -> str:
     return report
 
 
+@exhaustive_log
 def format_emergency_stop() -> str:
     """Format emergency stop confirmation."""
     return """<b>🚨 EMERGENCY STOP ACTIVATED</b>
@@ -175,6 +181,7 @@ To resume: restart the orchestrator service.
 """
 
 
+@exhaustive_log
 def format_withdrawal_confirm(amount: float, pending: float) -> str:
     """Format withdrawal confirmation."""
     return f"""<b>💸 Withdrawal Recorded</b>
@@ -189,6 +196,7 @@ Transfer to your bank account as configured.
 # ── Daily Report Sender ──────────────────────────────────────
 
 
+@exhaustive_log
 def send_daily_report(
     token: str, chat_id: str,
     capital_summary: dict,
@@ -218,6 +226,7 @@ def send_daily_report(
     return send_message(token, chat_id, report)
 
 
+@exhaustive_log
 def send_alert(token: str, chat_id: str, alert_type: str, message: str) -> bool:
     """Send a trading alert."""
     emoji_map = {

@@ -1,3 +1,4 @@
+from orchestrator.vibe_logger import exhaustive_log
 import os
 import time
 import json
@@ -14,6 +15,7 @@ logger = logging.getLogger("AITraderClient")
 BASE_URL = "https://ai4trade.ai/api"
 
 class AITraderClient:
+    @exhaustive_log
     def __init__(self, agent_name: str, email: str, password: str):
         self.agent_name = agent_name
         self.email = email
@@ -28,6 +30,7 @@ class AITraderClient:
         else:
             logger.warning("AI-Trader email or password not provided. Client will not connect.")
 
+    @exhaustive_log
     def _authenticate(self):
         """Attempts to login. If login fails, attempts to register."""
         login_url = f"{BASE_URL}/claw/agents/login"
@@ -60,6 +63,7 @@ class AITraderClient:
                 logger.error(f"Error during AI-Trader auth attempt {attempt+1}: {e}")
                 time.sleep(2)
 
+    @exhaustive_log
     def _register(self):
         register_url = f"{BASE_URL}/claw/agents/selfRegister"
         payload = {
@@ -81,9 +85,11 @@ class AITraderClient:
             logger.error(f"Error during AI-Trader registration: {e}")
 
     @property
+    @exhaustive_log
     def headers(self):
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
+    @exhaustive_log
     def publish_strategy(self, title: str, content: str, symbols: List[str] = None, tags: List[str] = None, market: str = "us-stock"):
         if not self.token:
             logger.warning("Cannot publish strategy, no auth token.")
@@ -109,6 +115,7 @@ class AITraderClient:
             logger.error(f"Error publishing strategy: {e}")
             return None
 
+    @exhaustive_log
     def sync_external_trade(self, action: str, symbol: str, price: float, quantity: float, content: str = ""):
         """Syncs an external trade spoofed as crypto to avoid market hours restriction, but with the real ticker."""
         if not self.token:
@@ -138,6 +145,7 @@ class AITraderClient:
             logger.error(f"Error syncing trade: {e}")
             return None
 
+    @exhaustive_log
     def _heartbeat_loop(self):
         logger.info("Starting AI-Trader heartbeat daemon...")
         while not self._stop_heartbeat.is_set():
@@ -175,6 +183,7 @@ class AITraderClient:
                     break
                 time.sleep(1)
 
+    @exhaustive_log
     def start_heartbeat(self):
         if not self.email or not self.password:
             return
@@ -186,6 +195,7 @@ class AITraderClient:
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True, name="AITraderHeartbeat")
         self._heartbeat_thread.start()
         
+    @exhaustive_log
     def stop_heartbeat(self):
         self._stop_heartbeat.set()
         if self._heartbeat_thread:

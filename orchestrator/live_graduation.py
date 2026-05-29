@@ -12,6 +12,7 @@ Transition modes:
 Graduation requires ALL criteria to pass over 60+ trading days.
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -76,6 +77,7 @@ class GraduationState:
     graduation_date: str = ""            # When graduated to current mode
 
 
+@exhaustive_log
 def load_graduation_state() -> GraduationState:
     """Load graduation state from disk."""
     if GRAD_STATE_FILE.exists():
@@ -91,6 +93,7 @@ def load_graduation_state() -> GraduationState:
     return GraduationState()
 
 
+@exhaustive_log
 def save_graduation_state(state: GraduationState) -> None:
     """Persist graduation state."""
     GRAD_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +101,7 @@ def save_graduation_state(state: GraduationState) -> None:
     GRAD_STATE_FILE.write_text(json.dumps(asdict(state), indent=2, default=str))
 
 
+@exhaustive_log
 def evaluate_graduation(
     state: GraduationState,
     criteria: GraduationCriteria = GraduationCriteria(),
@@ -168,6 +172,7 @@ def evaluate_graduation(
     return result
 
 
+@exhaustive_log
 def _recommend_mode(state: GraduationState, all_passed: bool) -> str:
     """Recommend the next trading mode based on criteria."""
     if state.current_mode == "PAPER" and all_passed:
@@ -179,6 +184,7 @@ def _recommend_mode(state: GraduationState, all_passed: bool) -> str:
     return state.current_mode
 
 
+@exhaustive_log
 def promote_mode(state: GraduationState, new_mode: str) -> bool:
     """Promote to a new trading mode. Only allows forward transitions."""
     valid_transitions = {
@@ -206,6 +212,7 @@ def promote_mode(state: GraduationState, new_mode: str) -> bool:
     return True
 
 
+@exhaustive_log
 def check_circuit_breakers(
     daily_pnl_pct: float,
     weekly_pnl_pct: float,
@@ -225,6 +232,7 @@ def check_circuit_breakers(
     return False, "OK"
 
 
+@exhaustive_log
 def get_graduation_progress_text(state: GraduationState) -> str:
     """Generate human-readable graduation progress."""
     criteria = GraduationCriteria()

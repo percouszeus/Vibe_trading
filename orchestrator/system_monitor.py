@@ -5,6 +5,7 @@ A utility to monitor the daily logs, track API usage/failures, and provide
 a summary of "what went wrong when and where".
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -17,6 +18,7 @@ AUDIT_DIR = Path.home() / ".trading_platform" / "audit_logs"
 
 import json
 
+@exhaustive_log
 def analyze_today_logs():
     # Force UTF-8 for Windows console
     if sys.stdout.encoding.lower() != 'utf-8':
@@ -66,6 +68,7 @@ def analyze_today_logs():
     if not errors and not warnings:
         print("\nAll systems operating nominally with zero errors/warnings.")
         
+@exhaustive_log
 def analyze_audit_logs():
     today = datetime.now(ZoneInfo('Asia/Kolkata')).strftime("%Y-%m-%d")
     audit_file = AUDIT_DIR / f"state_{today}.audit"

@@ -5,6 +5,7 @@ Central configuration loader for the Vibe Trading India orchestrator.
 Loads from .env at project root and provides typed access to all settings.
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import os
@@ -156,6 +157,7 @@ class Config:
     project_root: Path = PROJECT_ROOT
 
 
+@exhaustive_log
 def load_config() -> Config:
     """Load configuration from environment variables."""
     return Config(
@@ -229,6 +231,7 @@ def load_config() -> Config:
     )
 
 
+@exhaustive_log
 def get_active_llm_config(cfg: Config) -> dict:
     """
     Resolve which LLM provider to use for subprocesses.

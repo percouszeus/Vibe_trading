@@ -15,6 +15,7 @@ Strategies:
   6. Sector Rotation (swing)
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -42,6 +43,7 @@ class StrategySignal:
     rationale: str
     timestamp: str = ""
 
+    @exhaustive_log
     def risk_reward_ratio(self) -> float:
         risk = abs(self.entry_price - self.stop_loss)
         reward = abs(self.target_price - self.entry_price)
@@ -62,10 +64,12 @@ class StrategyPerformance:
     active: bool = True
 
     @property
+    @exhaustive_log
     def win_rate(self) -> float:
         return self.wins / max(self.total_trades, 1)
 
     @property
+    @exhaustive_log
     def profit_factor(self) -> float:
         if self.losses == 0:
             return float('inf') if self.wins > 0 else 0
@@ -75,6 +79,7 @@ class StrategyPerformance:
 # ── Kelly Criterion ──────────────────────────────────────────
 
 
+@exhaustive_log
 def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float) -> float:
     """
     Calculate optimal position size using Kelly Criterion.
@@ -102,6 +107,7 @@ class PortfolioRules:
     min_confidence: float = 0.5             # Minimum signal confidence
 
 
+@exhaustive_log
 def validate_signal(signal: StrategySignal, current_positions: list[dict],
                     principal: float, rules: PortfolioRules) -> tuple[bool, str]:
     """Validate a signal against portfolio rules."""
@@ -138,6 +144,7 @@ def validate_signal(signal: StrategySignal, current_positions: list[dict],
 # ── Strategy Signal Generators ───────────────────────────────
 
 
+@exhaustive_log
 def generate_momentum_signal(symbol: str, market_data: dict) -> Optional[StrategySignal]:
     """
     Momentum Breakout: Volume surge + price above 20-DMA.
@@ -174,6 +181,7 @@ def generate_momentum_signal(symbol: str, market_data: dict) -> Optional[Strateg
     return None
 
 
+@exhaustive_log
 def generate_mean_reversion_signal(symbol: str, market_data: dict,
                                    history: list[dict]) -> Optional[StrategySignal]:
     """
@@ -218,6 +226,7 @@ def generate_mean_reversion_signal(symbol: str, market_data: dict,
     return None
 
 
+@exhaustive_log
 def generate_fii_flow_signal(fii_net: float, dii_net: float,
                              nifty_data: dict) -> Optional[StrategySignal]:
     """
@@ -254,6 +263,7 @@ def generate_fii_flow_signal(fii_net: float, dii_net: float,
 PERF_FILE = Path.home() / ".trading_platform" / "strategy_performance.json"
 
 
+@exhaustive_log
 def load_strategy_performance() -> dict[str, StrategyPerformance]:
     """Load strategy performance from disk."""
     defaults = {
@@ -280,6 +290,7 @@ def load_strategy_performance() -> dict[str, StrategyPerformance]:
         return defaults
 
 
+@exhaustive_log
 def save_strategy_performance(perf: dict[str, StrategyPerformance]) -> None:
     """Save strategy performance to disk."""
     PERF_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +306,7 @@ def save_strategy_performance(perf: dict[str, StrategyPerformance]) -> None:
     PERF_FILE.write_text(json.dumps(data, indent=2))
 
 
+@exhaustive_log
 def update_kelly_fractions(perf: dict[str, StrategyPerformance]) -> None:
     """Recalculate Kelly fractions for all strategies."""
     for key, sp in perf.items():
@@ -307,6 +319,7 @@ def update_kelly_fractions(perf: dict[str, StrategyPerformance]) -> None:
                  f"WR={sp.win_rate:.0%}, PF={sp.profit_factor:.1f}")
 
 
+@exhaustive_log
 def get_strategy_summary(perf: dict[str, StrategyPerformance]) -> str:
     """Generate a formatted strategy summary."""
     lines = ["📊 Strategy Performance Summary", "─" * 50]

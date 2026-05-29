@@ -20,6 +20,7 @@ Each dimension gets a score from -100 (extreme bearish) to +100
 dimension is the "primary mover".
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import json
@@ -53,6 +54,7 @@ class SentimentAttribution:
     primary_score: float
     narrative: str              # LLM-generated explanation
 
+    @exhaustive_log
     def to_dict(self) -> dict:
         return {
             "symbol": self.symbol,
@@ -75,6 +77,7 @@ class SentimentAttribution:
 
 # ── Dimension Analyzers ──────────────────────────────────────
 
+@exhaustive_log
 def analyze_institutional(symbol: str) -> SentimentDimension:
     """
     FII/DII flow analysis.
@@ -134,6 +137,7 @@ def analyze_institutional(symbol: str) -> SentimentDimension:
     )
 
 
+@exhaustive_log
 def analyze_volume(symbol: str) -> SentimentDimension:
     """
     Volume analysis - unusual volume indicates institutional interest.
@@ -184,6 +188,7 @@ def analyze_volume(symbol: str) -> SentimentDimension:
     )
 
 
+@exhaustive_log
 def analyze_sector(symbol: str) -> SentimentDimension:
     """
     Sector rotation - is this a sector-wide move or stock-specific?
@@ -228,6 +233,7 @@ def analyze_sector(symbol: str) -> SentimentDimension:
     )
 
 
+@exhaustive_log
 def analyze_vix_regime() -> SentimentDimension:
     """
     India VIX analysis - fear/greed gauge.
@@ -264,6 +270,7 @@ def analyze_vix_regime() -> SentimentDimension:
     )
 
 
+@exhaustive_log
 def analyze_global_cues() -> SentimentDimension:
     """
     Check correlation with global markets.
@@ -304,6 +311,7 @@ def analyze_global_cues() -> SentimentDimension:
 
 # ── Main Attribution Function ────────────────────────────────
 
+@exhaustive_log
 def attribute_sentiment(symbol: str) -> SentimentAttribution:
     """
     Run full sentiment attribution for a stock.
@@ -360,6 +368,7 @@ def attribute_sentiment(symbol: str) -> SentimentAttribution:
     return attribution
 
 
+@exhaustive_log
 def _save_attribution(attr: SentimentAttribution) -> None:
     """Save attribution to daily journal."""
     journal_dir = Path.home() / ".trading_platform" / "sentiment"

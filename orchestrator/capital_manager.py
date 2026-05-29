@@ -27,6 +27,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
+from orchestrator.vibe_logger import exhaustive_log
 
 log = logging.getLogger("orchestrator.capital")
 
@@ -78,10 +79,12 @@ class CapitalState:
     last_updated: str = ""
     created_at: str = ""
 
+    @exhaustive_log
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
+    @exhaustive_log
     def from_dict(cls, data: dict) -> CapitalState:
         # Handle extra keys gracefully
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -92,6 +95,7 @@ class CapitalState:
 # ── Core Functions ───────────────────────────────────────────
 
 
+@exhaustive_log
 def load_state() -> CapitalState:
     """Load capital state from disk, or create fresh."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -116,6 +120,7 @@ def load_state() -> CapitalState:
     return state
 
 
+@exhaustive_log
 def save_state(state: CapitalState) -> None:
     """Persist capital state to disk."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -123,6 +128,7 @@ def save_state(state: CapitalState) -> None:
     STATE_FILE.write_text(json.dumps(state.to_dict(), indent=2, default=str))
 
 
+@exhaustive_log
 def _append_history(snapshot: dict) -> None:
     """Append a daily snapshot to the history log."""
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +139,7 @@ def _append_history(snapshot: dict) -> None:
 # ── Profit Split Engine ──────────────────────────────────────
 
 
+@exhaustive_log
 def process_daily_pnl(state: CapitalState, daily_pnl: float) -> dict:
     """
     Process end-of-day P&L through the 50/25/25 split engine.
@@ -228,16 +235,19 @@ def process_daily_pnl(state: CapitalState, daily_pnl: float) -> dict:
 # ── Capital Queries ──────────────────────────────────────────
 
 
+@exhaustive_log
 def get_position_budget(state: CapitalState, risk_pct: float = 2.0) -> float:
     """Get maximum capital available for new positions."""
     return state.principal * (risk_pct / 100.0)
 
 
+@exhaustive_log
 def get_total_portfolio_value(state: CapitalState) -> float:
     """Get total portfolio value including unrealized P&L."""
     return state.principal + state.unrealized_pnl
 
 
+@exhaustive_log
 def get_current_drawdown_pct(state: CapitalState) -> float:
     """Get current drawdown from high-water mark."""
     if state.max_principal <= 0:
@@ -245,6 +255,7 @@ def get_current_drawdown_pct(state: CapitalState) -> float:
     return (state.max_principal - state.principal) / state.max_principal * 100
 
 
+@exhaustive_log
 def should_halt_trading(state: CapitalState, max_drawdown_pct: float = 15.0,
                         min_capital: float = 50_000.0) -> tuple[bool, str]:
     """
@@ -267,11 +278,13 @@ def should_halt_trading(state: CapitalState, max_drawdown_pct: float = 15.0,
 # ── AI Fund Operations ───────────────────────────────────────
 
 
+@exhaustive_log
 def get_ai_fund_balance(state: CapitalState) -> float:
     """Get current unspent AI fund balance."""
     return state.ai_fund_balance
 
 
+@exhaustive_log
 def spend_ai_fund(state: CapitalState, amount: float, description: str,
                   category: str = "llm_credits") -> bool:
     """
@@ -307,6 +320,7 @@ def spend_ai_fund(state: CapitalState, amount: float, description: str,
 # ── Owner Withdrawal ─────────────────────────────────────────
 
 
+@exhaustive_log
 def record_owner_withdrawal(state: CapitalState, amount: float,
                             method: str = "bank_transfer") -> bool:
     """
@@ -341,6 +355,7 @@ def record_owner_withdrawal(state: CapitalState, amount: float,
 # ── Reporting ────────────────────────────────────────────────
 
 
+@exhaustive_log
 def generate_daily_summary(state: CapitalState) -> dict:
     """Generate a summary dict for the daily report."""
     win_rate = (
@@ -381,6 +396,7 @@ def generate_daily_summary(state: CapitalState) -> dict:
     }
 
 
+@exhaustive_log
 def generate_monthly_report(state: CapitalState) -> str:
     """Generate a formatted monthly report string."""
     summary = generate_daily_summary(state)

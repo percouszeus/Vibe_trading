@@ -11,6 +11,7 @@ Data Sources (priority order):
 Replaces Fyers entirely.
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import logging
@@ -31,6 +32,7 @@ log = logging.getLogger("orchestrator.market_data")
 
 # ── yfinance (always available, no auth) ─────────────────────
 
+@exhaustive_log
 def get_stock_data_yfinance(symbol: str, period: str = "1mo") -> dict:
     """
     Fetch stock data via yfinance. No API key needed.
@@ -80,6 +82,7 @@ def get_stock_data_yfinance(symbol: str, period: str = "1mo") -> dict:
         return {"status": "error", "error": str(e)}
 
 
+@exhaustive_log
 def get_historical_ohlcv(symbol: str, days: int = 90) -> list[dict]:
     """Get historical OHLCV data via yfinance."""
     try:
@@ -107,6 +110,7 @@ def get_historical_ohlcv(symbol: str, days: int = 90) -> list[dict]:
 
 # ── NSE-specific data (options chain, FII/DII, indices) ──────
 
+@exhaustive_log
 def get_nse_fii_dii_data() -> dict:
     """
     Fetch FII/DII daily activity from NSE website.
@@ -133,6 +137,7 @@ def get_nse_fii_dii_data() -> dict:
         return {"status": "error", "error": str(e)}
 
 
+@exhaustive_log
 def get_india_vix() -> float:
     """Get India VIX from yfinance."""
     try:
@@ -146,6 +151,7 @@ def get_india_vix() -> float:
     return 0.0
 
 
+@exhaustive_log
 def get_nifty_level() -> dict:
     """Get current NIFTY 50 level."""
     return get_stock_data_yfinance("^NSEI")
@@ -153,6 +159,7 @@ def get_nifty_level() -> dict:
 
 # ── Multi-source fetcher ─────────────────────────────────────
 
+@exhaustive_log
 def fetch_quote(symbol: str, prefer: str = "kite") -> dict:
     """
     Fetch a quote with automatic fallback.

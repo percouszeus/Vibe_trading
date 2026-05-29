@@ -17,6 +17,7 @@ Can run as:
   - Daemon  (continuous: `python -m orchestrator.daily_cycle --daemon`)
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
 import argparse
@@ -54,15 +55,8 @@ if sys.stdout.encoding.lower() != 'utf-8':
 if sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8')
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_DIR / f"daily_{datetime.now():%Y%m%d}.log", encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-log = logging.getLogger("orchestrator")
+from orchestrator.vibe_logger import setup_exhaustive_logging, exhaustive_log
+log = setup_exhaustive_logging(str(LOG_DIR / f"daily_{datetime.now():%Y%m%d}.log"))
 
 
 # ── Journal ──────────────────────────────────────────────────
@@ -71,6 +65,7 @@ JOURNAL_DIR = Path.home() / ".trading_platform" / "journal"
 JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@exhaustive_log
 def journal_entry(phase: str, data: dict) -> None:
     """Append a timestamped entry to today's journal."""
     today_file = JOURNAL_DIR / f"{datetime.now():%Y-%m-%d}.jsonl"
@@ -86,6 +81,7 @@ def journal_entry(phase: str, data: dict) -> None:
 
 _shared_ai_client = None
 
+@exhaustive_log
 def _get_ai_client(cfg: Config) -> Optional[AITraderClient]:
     """Helper to initialize the AI-Trader client from config (Singleton)."""
     global _shared_ai_client
@@ -108,11 +104,13 @@ class QuoteSyncer:
     Allows subprocesses (analysts) to read real-time data without
     connecting to the WebSocket themselves.
     """
+    @exhaustive_log
     def __init__(self, interval: int = 5):
         self.interval = interval
         self.running = False
         self._thread = None
 
+    @exhaustive_log
     def start(self):
         if self.running:
             return
@@ -121,11 +119,13 @@ class QuoteSyncer:
         self._thread.start()
         log.info("📡 QuoteSyncer started (syncing ticks to disk)")
 
+    @exhaustive_log
     def stop(self):
         self.running = False
         if self._thread:
             self._thread.join(timeout=1)
 
+    @exhaustive_log
     def _run(self):
         # BUG-08 FIX: Retry imports in case sys.path isn't ready yet
         ws_manager = None
@@ -156,6 +156,7 @@ class QuoteSyncer:
 # ── Phase Implementations ────────────────────────────────────
 
 
+@exhaustive_log
 def _login_if_needed(cfg: Config):
     """Ensure broker session is active and WebSocket is running.
     BUG-02 FIX: Use non-interactive broker setup — never call the
@@ -233,6 +234,7 @@ def _login_if_needed(cfg: Config):
         log.error(f"Broker connection failed: {e}")
 
 
+@exhaustive_log
 def phase_premarket(cfg: Config) -> dict:
     """
     08:45 IST — Pre-market scan.
@@ -293,6 +295,7 @@ def phase_premarket(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_analysis(cfg: Config) -> dict:
     """
     09:15 IST — Market open analysis.
@@ -348,6 +351,7 @@ def phase_analysis(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def _place_strategy_legs_automated(broker: Any, strategy: Any, symbol: str) -> list[dict]:
     """Automated order placement for all strategy legs in the background."""
     placed_legs = []
@@ -407,6 +411,7 @@ def _place_strategy_legs_automated(broker: Any, strategy: Any, symbol: str) -> l
     return placed_legs
 
 
+@exhaustive_log
 def phase_execute(cfg: Config) -> dict:
     """
     09:30 IST — Paper order execution.
@@ -494,6 +499,10 @@ def phase_execute(cfg: Config) -> dict:
                 log.warning(f"  ⚠️ Could not fetch spot price for {symbol}: {e} — skipping trade.")
                 continue
 
+        if spot <= 0.0:
+            log.warning(f"  ⚠️ Spot price for {symbol} is invalid (₹{spot:,.2f}) — skipping trade.")
+            continue
+
         log.info(f"  📈 Recommended View: {view} (Spot: ₹{spot:,.2f})")
         
         # Get optimal strategy recommendation
@@ -553,6 +562,7 @@ def phase_execute(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_midday(cfg: Config) -> dict:
     """
     12:30 IST — Mid-day review.
@@ -598,6 +608,7 @@ def phase_midday(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_eod(cfg: Config) -> dict:
     """
     15:15 IST — End of day close.
@@ -643,6 +654,7 @@ def phase_eod(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_capital_split(cfg: Config) -> dict:
     """
     15:30 IST — Capital split.
@@ -708,6 +720,7 @@ def phase_capital_split(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_auto_improve(cfg: Config) -> dict:
     """
     16:00 IST — Auto-improve cycle.
@@ -830,6 +843,7 @@ def phase_auto_improve(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_auto_heal(cfg: Config) -> dict:
     """
     17:00 IST — Auto-heal cycle.
@@ -900,6 +914,7 @@ def phase_auto_heal(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_dashboard_report(cfg: Config) -> dict:
     """
     17:30 IST — Dashboard report.
@@ -985,6 +1000,7 @@ def phase_dashboard_report(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
 def phase_graduation_check(cfg: Config) -> dict:
     """
     18:00 IST — Graduation check.
@@ -1054,6 +1070,7 @@ def phase_graduation_check(cfg: Config) -> dict:
 # ── Health Check Helpers ─────────────────────────────────────
 
 
+@exhaustive_log
 def _check_llm(cfg: Config) -> bool:
     """Check if the active LLM provider is running and responsive."""
     llm = get_active_llm_config(cfg)
@@ -1080,6 +1097,7 @@ def _check_llm(cfg: Config) -> bool:
         return False
 
 
+@exhaustive_log
 def _restart_ollama() -> None:
     """Attempt to restart Ollama service."""
     try:
@@ -1094,6 +1112,7 @@ def _restart_ollama() -> None:
         log.error(f"Failed to restart Ollama: {e}")
 
 
+@exhaustive_log
 def _check_kite_mcp(cfg: Config) -> bool:
     """Check if Kite MCP server is reachable."""
     # BUG-04 FIX: The MCP URL is an SSE endpoint — a plain GET can hang.
@@ -1111,6 +1130,7 @@ def _check_kite_mcp(cfg: Config) -> bool:
         return False
 
 
+@exhaustive_log
 def _send_telegram_alert(cfg: Config, message: str) -> None:
     """Send alert via Telegram bot."""
     if not cfg.auto_heal.telegram_bot_token or not cfg.auto_heal.telegram_chat_id:
@@ -1147,6 +1167,7 @@ except ImportError:
     ]
 
 
+@exhaustive_log
 def _get_stock_universe(name: str) -> list[str]:
     """Get list of symbols for the given universe name."""
     if name.upper() == "NIFTY50":
@@ -1160,6 +1181,7 @@ def _get_stock_universe(name: str) -> list[str]:
 # ── Environment Builder ─────────────────────────────────────
 
 
+@exhaustive_log
 def _build_env(cfg: Config) -> dict:
     """Build environment dict for subprocess calls to india-trade-cli."""
     import os
@@ -1211,6 +1233,7 @@ SCHEDULE = [
 ]
 
 
+@exhaustive_log
 def run_daemon(cfg: Config) -> None:
     """Run as a daemon, executing phases at scheduled times."""
     log.info("🚀 Orchestrator daemon started")
@@ -1283,6 +1306,7 @@ def run_daemon(cfg: Config) -> None:
 # ── CLI Entry Point ──────────────────────────────────────────
 
 
+@exhaustive_log
 def main():
     parser = argparse.ArgumentParser(description="Vibe Trading India — Daily Orchestrator")
     parser.add_argument(

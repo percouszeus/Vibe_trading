@@ -5,6 +5,7 @@ Walk-Forward Validation Engine for NSE Strategies.
 Implements expanding window temporal splits.
 """
 
+from orchestrator.vibe_logger import exhaustive_log
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -25,11 +26,13 @@ class WalkForwardValidator:
     Simulates training and testing over expanding temporal windows.
     """
 
+    @exhaustive_log
     def __init__(self, initial_train_days: int = 365, test_days: int = 30):
         self.initial_train_days = initial_train_days
         self.test_days = test_days
         self.trader = EnsembleTrader()
 
+    @exhaustive_log
     def split_data(self, df: pd.DataFrame) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
         """
         Creates expanding window splits.
@@ -53,6 +56,7 @@ class WalkForwardValidator:
             
         return splits
 
+    @exhaustive_log
     def run_validation(self, df: pd.DataFrame, target_col='Target'):
         """
         Execute the walk-forward cycle.
