@@ -7,6 +7,7 @@ Loads from .env at project root and provides typed access to all settings.
 
 from __future__ import annotations
 
+
 from orchestrator.vibe_logger import exhaustive_log
 import os
 from dataclasses import dataclass, field
