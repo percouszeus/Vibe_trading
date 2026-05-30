@@ -17,9 +17,9 @@ Can run as:
   - Daemon  (continuous: `python -m orchestrator.daily_cycle --daemon`)
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import argparse
 import json
 import logging

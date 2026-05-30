@@ -11,9 +11,9 @@ Analyzes options market data for trading signals:
   - Straddle premium for range estimation
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 import math

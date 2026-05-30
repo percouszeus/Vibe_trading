@@ -21,9 +21,9 @@ Commands:
   /report     — Monthly report
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 from datetime import datetime

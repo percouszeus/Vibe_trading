@@ -20,9 +20,9 @@ Each dimension gets a score from -100 (extreme bearish) to +100
 dimension is the "primary mover".
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 from dataclasses import dataclass, field

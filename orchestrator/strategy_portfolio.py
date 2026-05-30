@@ -15,9 +15,9 @@ Strategies:
   6. Sector Rotation (swing)
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 import math

@@ -11,9 +11,9 @@ Data Sources (priority order):
 Replaces Fyers entirely.
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Any

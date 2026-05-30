@@ -9,9 +9,9 @@ Evaluates performance gaps and auto-purchases improvements.
 Priorities: LLM Credits > Premium Data > Compute > Fine-tuning > Factor Data
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 from dataclasses import dataclass

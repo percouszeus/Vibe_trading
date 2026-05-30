@@ -12,9 +12,9 @@ Transition modes:
 Graduation requires ALL criteria to pass over 60+ trading days.
 """
 
-from orchestrator.vibe_logger import exhaustive_log
 from __future__ import annotations
 
+from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
 from dataclasses import dataclass, field
