@@ -1067,6 +1067,204 @@ def phase_graduation_check(cfg: Config) -> dict:
     return result
 
 
+# ── Weekend Analysis Phases ──────────────────────────────────
+
+
+@exhaustive_log
+def phase_weekend_deep_review(cfg: Config) -> dict:
+    """
+    WEEKEND — Deep weekly review.
+
+    Aggregates the past 5 trading days of journal entries, trade memory,
+    and drift reports to produce a comprehensive weekly performance review.
+    Uses LLM to identify systemic weaknesses and suggest improvements.
+    NO live trading or paper order execution.
+    """
+    log.info("═══ WEEKEND PHASE: Deep Weekly Review ═══")
+    result = {"phase": "weekend_deep_review", "status": "started", "is_weekend": True}
+
+    try:
+        sys.path.insert(0, str(cfg.project_root / "india-trade-cli"))
+        from engine.memory import trade_memory
+        from engine.drift import detect_drift
+
+        # 1. Aggregate last 7 days of journal entries
+        journal_entries = []
+        for i in range(7):
+            day = datetime.now() - timedelta(days=i)
+            day_file = JOURNAL_DIR / f"{day:%Y-%m-%d}.jsonl"
+            if day_file.exists():
+                with open(day_file) as f:
+                    for line in f:
+                        try:
+                            journal_entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+        result["journal_entries_reviewed"] = len(journal_entries)
+        log.info(f"Reviewed {len(journal_entries)} journal entries from the past week")
+
+        # 2. Trade memory stats and drift
+        stats = trade_memory.get_stats()
+        result["memory_stats"] = stats
+        drift_report = detect_drift()
+        result["drift"] = {
+            "win_rate_trend": drift_report.win_rate_trend,
+            "recent_win_rate": drift_report.recent_win_rate,
+            "alerts": drift_report.alerts,
+            "best_analyst": drift_report.best_analyst,
+            "worst_analyst": drift_report.worst_analyst,
+        }
+        log.info(f"Weekly drift: {drift_report.win_rate_trend} "
+                 f"(recent win rate: {drift_report.recent_win_rate:.0f}%)")
+
+        # 3. Reflect on ALL unprocessed trades (deeper than weekday)
+        recent_trades = trade_memory.query(limit=50)
+        reflected = 0
+        for trade in recent_trades:
+            if trade.outcome and not trade.lesson:
+                lesson = trade_memory.reflect_and_remember(trade.id)
+                if lesson:
+                    reflected += 1
+                    log.info(f"  📚 Weekend reflection on {trade.symbol}: {lesson[:100]}")
+        result["reflections"] = reflected
+
+        # 4. Weekly performance summary
+        profitable_entries = [e for e in journal_entries if e.get("phase") == "capital_split" and e.get("split", {}).get("daily_pnl", 0) > 0]
+        loss_entries = [e for e in journal_entries if e.get("phase") == "capital_split" and e.get("split", {}).get("daily_pnl", 0) < 0]
+        result["weekly_summary"] = {
+            "profitable_days": len(profitable_entries),
+            "loss_days": len(loss_entries),
+            "total_entries": len(journal_entries),
+        }
+
+        # 5. Strategy performance review
+        try:
+            from orchestrator.strategy_portfolio import load_strategy_performance, get_strategy_summary
+            perf = load_strategy_performance()
+            strat_summary = get_strategy_summary(perf)
+            result["strategy_summary"] = strat_summary
+            log.info(f"Strategy portfolio reviewed")
+        except Exception as sp_err:
+            log.warning(f"Strategy portfolio review failed: {sp_err}")
+
+        # 6. Drift alerts
+        if drift_report.alerts:
+            for alert in drift_report.alerts:
+                log.warning(f"  ⚠️ WEEKLY DRIFT ALERT: {alert}")
+
+        result["status"] = "complete"
+
+    except ImportError as e:
+        result["status"] = "import_error"
+        result["error"] = f"Could not import modules: {e}"
+        log.error(f"Weekend deep review import error: {e}")
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        log.error(f"Weekend deep review failed: {e}")
+
+    journal_entry("weekend_deep_review", result)
+    return result
+
+
+@exhaustive_log
+def phase_weekend_backtest_healing(cfg: Config) -> dict:
+    """
+    WEEKEND — Strategy backtest healing.
+
+    Runs Walk-Forward validation on all active strategies using historical
+    data. If a strategy consistently fails, the system logs the error and
+    attempts to fix/recalibrate it automatically.
+    NO live trading or paper order execution.
+    """
+    log.info("═══ WEEKEND PHASE: Backtest & Strategy Healing ═══")
+    result = {"phase": "weekend_backtest_healing", "status": "started", "is_weekend": True,
+              "strategies_tested": 0, "strategies_healed": 0, "strategies_failed": []}
+
+    try:
+        # 1. Run Walk-Forward validation
+        log.info("Running extended Walk-Forward validation...")
+        wf_proc = subprocess.run(
+            [sys.executable, "-m", "orchestrator.walk_forward"],
+            cwd=str(cfg.project_root),
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 min timeout (longer for weekend deep runs)
+            env=_build_env(cfg),
+        )
+        result["walk_forward_output"] = wf_proc.stdout[-2000:] if wf_proc.stdout else ""
+        result["walk_forward_exit"] = wf_proc.returncode
+        log.info(f"Walk-Forward validation completed: exit={wf_proc.returncode}")
+
+        if wf_proc.stderr:
+            log.warning(f"Walk-Forward stderr: {wf_proc.stderr[-500:]}")
+
+        # 2. Strategy portfolio review and healing
+        try:
+            from orchestrator.strategy_portfolio import load_strategy_performance
+            perf = load_strategy_performance()
+
+            for strat_name, strat_data in (perf or {}).items():
+                result["strategies_tested"] += 1
+                win_rate = strat_data.get("win_rate", 0)
+                total_trades = strat_data.get("total_trades", 0)
+
+                if total_trades >= 5 and win_rate < 0.35:
+                    # Strategy is consistently failing
+                    log.warning(f"⚠️ Strategy '{strat_name}' failing: "
+                                f"win_rate={win_rate:.0%}, trades={total_trades}")
+                    result["strategies_failed"].append({
+                        "name": strat_name,
+                        "win_rate": win_rate,
+                        "total_trades": total_trades,
+                        "action": "logged_and_attempted_fix",
+                    })
+
+                    # Attempt to heal by resetting confidence weights
+                    log.info(f"  🔧 Attempting to heal strategy '{strat_name}'...")
+                    strat_data["confidence_weight"] = max(0.1, strat_data.get("confidence_weight", 1.0) * 0.5)
+                    result["strategies_healed"] += 1
+                    log.info(f"  ✅ Reduced confidence weight for '{strat_name}' "
+                             f"to {strat_data['confidence_weight']:.2f}")
+
+        except Exception as sp_err:
+            log.warning(f"Strategy healing failed: {sp_err}")
+            result["healing_error"] = str(sp_err)
+
+        # 3. Run auto-improve cycle (LLM reflection, AI fund spending)
+        log.info("Running weekend auto-improve cycle...")
+        try:
+            improve_result = phase_auto_improve(cfg)
+            result["auto_improve"] = improve_result.get("status", "unknown")
+        except Exception as ai_err:
+            log.warning(f"Weekend auto-improve failed: {ai_err}")
+
+        # 4. Run auto-heal checks
+        log.info("Running weekend auto-heal checks...")
+        try:
+            heal_result = phase_auto_heal(cfg)
+            result["auto_heal"] = heal_result.get("status", "unknown")
+        except Exception as ah_err:
+            log.warning(f"Weekend auto-heal failed: {ah_err}")
+
+        result["status"] = "complete"
+        log.info(f"Weekend healing complete: tested={result['strategies_tested']}, "
+                 f"healed={result['strategies_healed']}, "
+                 f"failed={len(result['strategies_failed'])}")
+
+    except subprocess.TimeoutExpired:
+        result["status"] = "timeout"
+        result["error"] = "Walk-forward validation timed out after 600s"
+        log.error("Walk-forward validation timed out")
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        log.error(f"Weekend backtest healing failed: {e}")
+
+    journal_entry("weekend_backtest_healing", result)
+    return result
+
+
 # ── Health Check Helpers ─────────────────────────────────────
 
 
@@ -1232,6 +1430,14 @@ SCHEDULE = [
     ("18:00", "graduation_check", phase_graduation_check),
 ]
 
+WEEKEND_SCHEDULE = [
+    ("09:00", "weekend_deep_review",       phase_weekend_deep_review),
+    ("10:00", "weekend_backtest_healing",  phase_weekend_backtest_healing),
+    ("14:00", "weekend_deep_review_2",     phase_weekend_deep_review),
+    ("15:00", "weekend_backtest_healing_2", phase_weekend_backtest_healing),
+    ("17:00", "auto_heal",                 phase_auto_heal),
+]
+
 
 @exhaustive_log
 def run_daemon(cfg: Config) -> None:
@@ -1254,7 +1460,6 @@ def run_daemon(cfg: Config) -> None:
     syncer = QuoteSyncer(interval=5)
     syncer.start()
 
-
     # Initial login
     _login_if_needed(cfg)
 
@@ -1262,27 +1467,26 @@ def run_daemon(cfg: Config) -> None:
         now = datetime.now()
         current_time = now.strftime("%H:%M")
         today = now.strftime("%Y-%m-%d")
+        is_weekend = now.weekday() >= 5  # Saturday=5, Sunday=6
 
-        # Skip executing the schedule on weekends (Saturday=5, Sunday=6)
-        if now.weekday() >= 5:
-            weekend_key = f"{today}_weekend_skip"
-            if weekend_key not in executed_today:
-                log.info(f"📅 Weekend detected ({now.strftime('%A')}) — skipping all scheduled phases for today.")
-                executed_today.add(weekend_key)
-            
-            # Check for day reset to clear state at midnight
-            if today != last_reset_date:
-                log.info(f"New day (weekend): {today} — resetting schedule")
-                executed_today.clear()
-                last_reset_date = today
-            
-            time.sleep(60)  # Sleep longer on weekends
-            continue
+        # Pick the right schedule based on weekday vs weekend
+        if is_weekend:
+            active_schedule = WEEKEND_SCHEDULE
+            mode_label = f"WEEKEND ({now.strftime('%A')})"
+        else:
+            active_schedule = SCHEDULE
+            mode_label = "WEEKDAY"
 
-        for sched_time, phase_name, phase_fn in SCHEDULE:
+        # Log mode switch once per day
+        mode_key = f"{today}_mode_announced"
+        if mode_key not in executed_today:
+            log.info(f"📅 {mode_label} mode active for {today}")
+            executed_today.add(mode_key)
+
+        for sched_time, phase_name, phase_fn in active_schedule:
             key = f"{today}_{phase_name}"
             if key not in executed_today and current_time >= sched_time:
-                log.info(f"⏰ Triggering phase: {phase_name} (scheduled: {sched_time})")
+                log.info(f"⏰ Triggering phase: {phase_name} (scheduled: {sched_time}, mode: {mode_label})")
                 try:
                     phase_fn(cfg)
                 except Exception as e:
@@ -1295,10 +1499,11 @@ def run_daemon(cfg: Config) -> None:
 
         # BUG-09 FIX: Clear executed set exactly once per day using date tracking
         if today != last_reset_date:
-            log.info(f"New trading day: {today} — resetting schedule")
+            log.info(f"New day: {today} — resetting schedule")
             executed_today.clear()
             last_reset_date = today
-            _login_if_needed(cfg)  # Re-login for the new trading day
+            if not is_weekend:
+                _login_if_needed(cfg)  # Re-login only on trading days
 
         time.sleep(30)  # Check every 30 seconds
 
@@ -1313,7 +1518,8 @@ def main():
         "--phase",
         choices=["premarket", "analysis", "execute", "midday", "eod",
                  "capital_split", "auto_improve", "auto_heal",
-                 "dashboard_report", "graduation_check", "all"],
+                 "dashboard_report", "graduation_check",
+                 "weekend_deep_review", "weekend_backtest_healing", "all"],
         help="Run a specific phase (or 'all' to run all sequentially)",
     )
     parser.add_argument("--daemon", action="store_true", help="Run as a daemon with scheduled execution")
@@ -1348,6 +1554,8 @@ def main():
             "auto_heal": phase_auto_heal,
             "dashboard_report": phase_dashboard_report,
             "graduation_check": phase_graduation_check,
+            "weekend_deep_review": phase_weekend_deep_review,
+            "weekend_backtest_healing": phase_weekend_backtest_healing,
         }
         if args.phase == "all":
             for name, fn in phase_map.items():

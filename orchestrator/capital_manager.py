@@ -154,9 +154,17 @@ def process_daily_pnl(state: CapitalState, daily_pnl: float) -> dict:
       AI fund and owner pending are NEVER reduced.
 
     Returns a dict with the split details for journaling.
+
+    NOTE: trading_days is ONLY incremented on weekdays (Mon-Fri).
+    Weekend analysis phases must never inflate the day counter.
     """
-    today = datetime.now().strftime("%Y-%m-%d")
-    state.trading_days += 1
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    is_weekday = now.weekday() < 5  # Mon=0 .. Fri=4
+    if is_weekday:
+        state.trading_days += 1
+    else:
+        log.info(f"Weekend ({now.strftime('%A')}) — trading_days NOT incremented (stays {state.trading_days})")
     state.realized_pnl_today = daily_pnl
     state.cumulative_pnl += daily_pnl
 
@@ -273,6 +281,22 @@ def should_halt_trading(state: CapitalState, max_drawdown_pct: float = 15.0,
         return True, f"7 consecutive loss days — cooling off"
 
     return False, "OK"
+
+
+@exhaustive_log
+def reset_trading_days(state: CapitalState, new_count: int = 0) -> None:
+    """
+    Reset the trading_days counter.
+    Use this to fix inflated counters caused by weekend counting bugs.
+    """
+    old = state.trading_days
+    state.trading_days = new_count
+    state.profitable_days = 0
+    state.loss_days = 0
+    state.consecutive_loss_days = 0
+    state.max_consecutive_loss_days = 0
+    save_state(state)
+    log.info(f"Trading days counter reset: {old} → {new_count} (all day metrics zeroed)")
 
 
 # ── AI Fund Operations ───────────────────────────────────────
