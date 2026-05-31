@@ -55,7 +55,7 @@ class TradingConfig:
     total_capital: float = 1_000_000.0
     risk_pct: float = 2.0
     stock_universe: str = "NIFTY50"
-    max_daily_analyses: int = 5
+    max_daily_analyses: int = 50
 
 
 @dataclass
