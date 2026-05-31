@@ -1068,6 +1068,15 @@ def phase_graduation_check(cfg: Config) -> dict:
     return result
 
 
+@exhaustive_log
+def phase_weekly_maintenance(cfg: Config) -> dict:
+    """
+    WEEKEND — Consolidated weekly report and raw logs cleanup.
+    """
+    from orchestrator.weekly_maintenance import phase_weekly_maintenance as wm_run
+    return wm_run(cfg)
+
+
 # ── Weekend Analysis Phases ──────────────────────────────────
 
 
@@ -1437,6 +1446,7 @@ WEEKEND_SCHEDULE = [
     ("14:00", "weekend_deep_review_2",     phase_weekend_deep_review),
     ("15:00", "weekend_backtest_healing_2", phase_weekend_backtest_healing),
     ("17:00", "auto_heal",                 phase_auto_heal),
+    ("18:00", "weekly_maintenance",         phase_weekly_maintenance),
 ]
 
 
@@ -1496,6 +1506,28 @@ def run_daemon(cfg: Config) -> None:
                         "status": "crashed",
                         "error": str(e),
                      })
+                    try:
+                        if cfg.auto_heal.telegram_bot_token and cfg.auto_heal.telegram_chat_id:
+                            from orchestrator.telegram_dashboard import send_alert
+                            err_str = str(e)
+                            alert_type = "risk"
+                            is_rate_limit = any(x in err_str.lower() for x in ["429", "rate limit", "too many requests", "quota exceeded", "limit reached"])
+                            
+                            badge = "🚨 <b>CRITICAL CRASH</b>"
+                            if is_rate_limit:
+                                badge = "⚠️ <b>RATE LIMIT EXCEEDED (429)</b>"
+                                alert_type = "circuit_breaker"
+
+                            alert_msg = (
+                                f"{badge}\n\n"
+                                f"• <b>Phase:</b> {phase_name}\n"
+                                f"• <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}\n"
+                                f"• <b>Error:</b> <code>{err_str[:200]}</code>\n\n"
+                                f"<i>Action required if error persists.</i>"
+                            )
+                            send_alert(cfg.auto_heal.telegram_bot_token, cfg.auto_heal.telegram_chat_id, alert_type, alert_msg)
+                    except Exception as t_err:
+                        log.error(f"Failed to send Telegram crash alert: {t_err}")
                 executed_today.add(key)
 
         # BUG-09 FIX: Clear executed set exactly once per day using date tracking
@@ -1520,7 +1552,8 @@ def main():
         choices=["premarket", "analysis", "execute", "midday", "eod",
                  "capital_split", "auto_improve", "auto_heal",
                  "dashboard_report", "graduation_check",
-                 "weekend_deep_review", "weekend_backtest_healing", "all"],
+                 "weekend_deep_review", "weekend_backtest_healing",
+                 "weekly_maintenance", "all"],
         help="Run a specific phase (or 'all' to run all sequentially)",
     )
     parser.add_argument("--daemon", action="store_true", help="Run as a daemon with scheduled execution")
@@ -1557,6 +1590,7 @@ def main():
             "graduation_check": phase_graduation_check,
             "weekend_deep_review": phase_weekend_deep_review,
             "weekend_backtest_healing": phase_weekend_backtest_healing,
+            "weekly_maintenance": phase_weekly_maintenance,
         }
         if args.phase == "all":
             for name, fn in phase_map.items():
