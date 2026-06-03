@@ -421,7 +421,7 @@ def phase_execute(cfg: Config) -> dict:
     via the active broker.
     """
     log.info("═══ PHASE: Paper Order Execution ═══")
-    result = {"phase": "execute", "orders": [], "status": "started"}
+    result = {"phase": "execute", "orders": [], "status": "started", "trades_skipped": 0, "trades_placed": 0}
     auditor.snapshot("execute", "start", result)
 
     # Read today's journal to get analysis signals
@@ -479,15 +479,30 @@ def phase_execute(cfg: Config) -> dict:
         log.info(f"Evaluating automated {mode} order for {symbol}...")
 
         # Parse final synthesis verdict
-        parsed = parse_synthesis_output(output)
-        raw_verdict = parsed.verdict
-        
+        # First try fast regex extraction (handles large CLI output)
+        import re as _re
+        _verdict_m = _re.search(r'"verdict"\s*:\s*"(STRONG_BUY|BUY|HOLD|SELL|STRONG_SELL)"', output)
+        if _verdict_m:
+            raw_verdict = _verdict_m.group(1)
+            log.info(f"  🎯 Verdict for {symbol} (regex): {raw_verdict}")
+        else:
+            _verdict_m2 = _re.search(r'(?i)\bverdict[:\s]+([A-Z_]+)', output)
+            if _verdict_m2:
+                raw_verdict = _verdict_m2.group(1).upper()
+                log.info(f"  🎯 Verdict for {symbol} (text scan): {raw_verdict}")
+            else:
+                parsed = parse_synthesis_output(output)
+                raw_verdict = parsed.verdict
+                log.info(f"  🎯 Verdict for {symbol} (parser): {raw_verdict} confidence={parsed.confidence}")
+
         if raw_verdict in ("STRONG_BUY", "BUY"):
             view = "BULLISH"
         elif raw_verdict in ("STRONG_SELL", "SELL"):
             view = "BEARISH"
         else:
-            log.info(f"  ➖ Verdict for {symbol} is {raw_verdict} (HOLD) — skipping trade.")
+            result.setdefault("trades_skipped", 0)
+            result["trades_skipped"] = result.get("trades_skipped", 0) + 1
+            log.warning(f"  ➖ Verdict for {symbol} is {raw_verdict} (HOLD/NEUTRAL) — skipping trade.")
             continue
 
         # Get current spot price
@@ -558,6 +573,7 @@ def phase_execute(cfg: Config) -> dict:
 
     result["status"] = "complete"
     result["executed_count"] = len(result["orders"])
+    result["trades_placed"] = len(result["orders"])
     auditor.snapshot("execute", "end", result)
     journal_entry("execute", result)
     return result
