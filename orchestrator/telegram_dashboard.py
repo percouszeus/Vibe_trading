@@ -27,6 +27,8 @@ from __future__ import annotations
 from orchestrator.vibe_logger import exhaustive_log
 import json
 import logging
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -241,6 +243,186 @@ def send_alert(token: str, chat_id: str, alert_type: str, message: str) -> bool:
     emoji = emoji_map.get(alert_type, "📢")
     text = f"{emoji} <b>{alert_type.upper()}</b>\n\n{message}"
     return send_message(token, chat_id, text)
+
+
+@exhaustive_log
+def _get_ai_fund_spending_summary() -> dict:
+    from orchestrator.capital_manager import AI_SPEND_LOG
+    summary = {
+        "total_spent": 0.0,
+        "purchase_count": 0,
+        "by_category": {}
+    }
+    if not AI_SPEND_LOG.exists():
+        return summary
+
+    try:
+        with open(AI_SPEND_LOG, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    amount = float(entry.get("amount", 0.0))
+                    category = entry.get("category", "llm_credits")
+                    summary["total_spent"] += amount
+                    summary["purchase_count"] += 1
+                    summary["by_category"][category] = summary["by_category"].get(category, 0.0) + amount
+                except Exception:
+                    continue
+    except Exception as e:
+        log.error(f"Failed to read AI spend log: {e}")
+
+    return summary
+
+
+@exhaustive_log
+def _listener_loop(cfg: Config, token: str, chat_id: str) -> None:
+    import httpx
+    from orchestrator.capital_manager import load_state, record_owner_withdrawal, generate_daily_summary, STATE_DIR
+    from orchestrator.live_graduation import load_graduation_state, evaluate_graduation
+
+    offset = 0
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    log.info("Telegram command listener polling loop started...")
+
+    while True:
+        try:
+            params = {"timeout": 30}
+            if offset:
+                params["offset"] = offset
+
+            resp = httpx.get(url, params=params, timeout=35)
+            if resp.status_code != 200:
+                time.sleep(5)
+                continue
+
+            data = resp.json()
+            if not data.get("ok"):
+                time.sleep(5)
+                continue
+
+            for update in data.get("result", []):
+                update_id = update["update_id"]
+                offset = update_id + 1
+
+                message = update.get("message")
+                if not message:
+                    continue
+
+                from_chat = message.get("chat", {})
+                if str(from_chat.get("id")) != str(chat_id):
+                    log.warning(f"Ignored message from unauthorized chat_id: {from_chat.get('id')}")
+                    continue
+
+                text = message.get("text", "").strip()
+                if not text.startswith("/"):
+                    continue
+
+                log.info(f"Received Telegram command: {text}")
+                parts = text.split()
+                cmd = parts[0].lower()
+
+                if cmd == "/status":
+                    state = load_state()
+                    summary = generate_daily_summary(state)
+                    report = format_capital_status(summary)
+                    send_message(token, chat_id, report)
+
+                elif cmd == "/aifund":
+                    state = load_state()
+                    spending_summary = _get_ai_fund_spending_summary()
+                    report = format_ai_fund_report(state.ai_fund_balance, spending_summary)
+                    send_message(token, chat_id, report)
+
+                elif cmd == "/graduate":
+                    state = load_state()
+                    grad_state = load_graduation_state()
+                    eval_res = evaluate_graduation(state, grad_state)
+                    report = format_daily_report(
+                        date_str=datetime.now().strftime("%Y-%m-%d"),
+                        daily_pnl=state.realized_pnl_today,
+                        principal=state.principal,
+                        split={},
+                        strategy_summary="",
+                        ai_fund_balance=state.ai_fund_balance,
+                        ai_fund_spent_today=0,
+                        graduation_progress=eval_res.get("progress_pct", 0),
+                        graduation_details=eval_res,
+                    )
+                    send_message(token, chat_id, report)
+
+                elif cmd == "/emergency":
+                    emergency_file = STATE_DIR / "emergency_stop.flag"
+                    emergency_file.touch()
+                    report = format_emergency_stop()
+                    send_message(token, chat_id, report)
+                    log.critical("🚨 EMERGENCY STOP ACTIVATED VIA TELEGRAM!")
+
+                elif cmd == "/resume":
+                    emergency_file = STATE_DIR / "emergency_stop.flag"
+                    if emergency_file.exists():
+                        emergency_file.unlink()
+                        send_message(token, chat_id, "<b>✅ EMERGENCY RESUME ACTIVATED</b>\n\nTrading has been unhalted.")
+                        log.info("Telegram: emergency stop flag cleared.")
+                    else:
+                        send_message(token, chat_id, "System is not in halted state.")
+
+                elif cmd == "/withdraw":
+                    if len(parts) < 2:
+                        send_message(token, chat_id, "Usage: `/withdraw <amount>`")
+                        continue
+                    try:
+                        amount = float(parts[1])
+                        state = load_state()
+                        success = record_owner_withdrawal(state, amount)
+                        if success:
+                            send_message(token, chat_id, format_withdrawal_confirm(amount, state.owner_pending))
+                        else:
+                            send_message(token, chat_id, f"❌ Withdrawal failed: Insufficient pending balance (₹{state.owner_pending:,.0f}).")
+                    except ValueError:
+                        send_message(token, chat_id, "Invalid amount. Usage: `/withdraw <amount>`")
+
+                elif cmd == "/strategies":
+                    try:
+                        from orchestrator.strategy_portfolio import load_strategy_performance, get_strategy_summary
+                        perf = load_strategy_performance()
+                        strat_summary = get_strategy_summary(perf)
+                        send_message(token, chat_id, f"<b>📊 Active Strategies:</b>\n<pre>{strat_summary}</pre>")
+                    except Exception as e:
+                        send_message(token, chat_id, f"Error loading strategies: {e}")
+
+                elif cmd == "/help" or cmd == "/start":
+                    help_text = (
+                        "<b>🤖 Vibe Trading Assistant Bot</b>\n\n"
+                        "<b>Commands:</b>\n"
+                        "• /status — Current capital state & metrics\n"
+                        "• /aifund — AI Fund balance & spending summary\n"
+                        "• /strategies — Active strategies performance\n"
+                        "• /graduate — Live trading graduation progress\n"
+                        "• /withdraw &lt;amount&gt; — Withdraw payout\n"
+                        "• /emergency — Trigger an immediate trading halt\n"
+                        "• /resume — Clear emergency halt and resume\n"
+                    )
+                    send_message(token, chat_id, help_text)
+
+        except Exception as e:
+            log.error(f"Error in Telegram listener loop: {e}")
+            time.sleep(10)
+
+
+@exhaustive_log
+def start_telegram_listener(cfg: Config) -> None:
+    """Start the Telegram interactive listener in a background thread."""
+    token = cfg.telegram.bot_token
+    chat_id = cfg.telegram.chat_id
+    if not token or not chat_id:
+        log.warning("Telegram listener not configured — skipping listener thread")
+        return
+
+    thread = threading.Thread(target=_listener_loop, args=(cfg, token, chat_id), daemon=True)
+    thread.start()
+    log.info("🤖 Telegram command listener thread started.")
 
 
 if __name__ == "__main__":

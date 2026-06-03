@@ -23,12 +23,18 @@ class StrictFileHandler(logging.FileHandler):
     """
     def emit(self, record):
         try:
-            msg = self.format(record)
             stream = self.stream
+            if stream is None:
+                return
+            msg = self.format(record)
             stream.write(msg + self.terminator)
             self.flush()
-            if record.levelno in (TRACE_LEVEL, logging.ERROR, logging.CRITICAL):
-                os.fsync(stream.fileno())
+            if record.levelno in (logging.ERROR, logging.CRITICAL):
+                try:
+                    if hasattr(stream, "fileno") and not stream.closed:
+                        os.fsync(stream.fileno())
+                except (OSError, ValueError):
+                    pass
         except Exception:
             self.handleError(record)
 

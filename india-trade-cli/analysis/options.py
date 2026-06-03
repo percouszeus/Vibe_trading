@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+import yfinance as yf
 
 try:
     from py_vollib.black_scholes.greeks.analytical import (
@@ -257,9 +258,6 @@ def compute_iv_rank_from_history(symbol: str, period: str = "1y") -> Optional[fl
     Returns 0-100 or None if data unavailable.
     """
     try:
-        import yfinance as yf
-        import numpy as np
-
         # Use proper symbol mapping (handles NIFTY → ^NSEI etc.)
         try:
             from market.yfinance_provider import _to_yf_symbol

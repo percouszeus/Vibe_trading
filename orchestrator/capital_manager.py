@@ -207,8 +207,22 @@ def process_daily_pnl(state: CapitalState, daily_pnl: float) -> dict:
                  f"Owner ₹{owner:,.0f}")
 
     elif daily_pnl < 0:
-        # ── Loss Day — Full loss from principal only ───────
-        state.principal += daily_pnl  # daily_pnl is negative
+        # ── Loss Day — Apply Symmetric 50/25/25 Loss Split ──
+        loss_to_principal = daily_pnl * state.reinvest_pct
+        loss_to_ai = daily_pnl * state.ai_fund_pct
+        loss_to_owner = daily_pnl * state.owner_pct
+
+        # Deduct loss from AI fund balance, overflowing any excess back to principal
+        actual_loss_to_ai = max(-state.ai_fund_balance, loss_to_ai)
+        state.ai_fund_balance += actual_loss_to_ai
+        loss_to_principal += (loss_to_ai - actual_loss_to_ai)
+
+        # Deduct loss from Owner pending balance, overflowing any excess back to principal
+        actual_loss_to_owner = max(-state.owner_pending, loss_to_owner)
+        state.owner_pending += actual_loss_to_owner
+        loss_to_principal += (loss_to_owner - actual_loss_to_owner)
+
+        state.principal += loss_to_principal
         state.loss_days += 1
         state.consecutive_loss_days += 1
         state.max_consecutive_loss_days = max(
@@ -216,7 +230,15 @@ def process_daily_pnl(state: CapitalState, daily_pnl: float) -> dict:
         )
         state.worst_day_pnl = min(state.worst_day_pnl, daily_pnl)
 
-        log.warning(f"📉 LOSS DAY: ₹{daily_pnl:,.0f} absorbed from principal. "
+        # Record split details in journal dictionary for transparency
+        split["reinvest_amount"] = round(loss_to_principal, 2)
+        split["ai_fund_amount"] = round(actual_loss_to_ai, 2)
+        split["owner_amount"] = round(actual_loss_to_owner, 2)
+
+        log.warning(f"📉 LOSS DAY: ₹{daily_pnl:,.0f} absorbed symmetrically → "
+                    f"Principal loss: ₹{loss_to_principal:,.0f} | "
+                    f"AI Fund loss: ₹{actual_loss_to_ai:,.0f} | "
+                    f"Owner loss: ₹{actual_loss_to_owner:,.0f}. "
                     f"Consecutive losses: {state.consecutive_loss_days}")
 
     else:
@@ -271,6 +293,11 @@ def should_halt_trading(state: CapitalState, max_drawdown_pct: float = 15.0,
     Check if trading should be halted due to safety constraints.
     Returns (should_halt, reason).
     """
+    # ── Check Manual Emergency Stop via Telegram ─────────────────────
+    emergency_file = STATE_DIR / "emergency_stop.flag"
+    if emergency_file.exists():
+        return True, "Emergency Stop Activated via Telegram"
+
     dd = get_current_drawdown_pct(state)
     if dd >= max_drawdown_pct:
         return True, f"Max drawdown breached: {dd:.1f}% >= {max_drawdown_pct}%"

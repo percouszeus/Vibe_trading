@@ -83,8 +83,9 @@ class UpstoxAPI(BrokerAPI):
                 if time.time() - ts < TOKEN_EXPIRY:
                     self._access_token = data.get("access_token", "")
                     self._token_ts = ts
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger("brokers.upstox").warning(f"Failed to load upstox token session: {e}")
 
     def _save_token(self, token: str) -> None:
         TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)

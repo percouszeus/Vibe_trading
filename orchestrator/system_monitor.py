@@ -12,8 +12,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 
-LOG_DIR = Path(__file__).resolve().parent / "logs"
-JOURNAL_DIR = Path.home() / ".trading_platform" / "journals"
+LOG_DIR = Path.home() / ".trading_platform" / "logs"
+JOURNAL_DIR = Path.home() / ".trading_platform" / "journal"
 AUDIT_DIR = Path.home() / ".trading_platform" / "audit_logs"
 
 import json

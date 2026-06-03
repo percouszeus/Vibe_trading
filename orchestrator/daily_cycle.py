@@ -1394,10 +1394,14 @@ def _build_env(cfg: Config) -> dict:
     """Build environment dict for subprocess calls to india-trade-cli."""
     import os
     env = os.environ.copy()
-    # BUG-12 FIX: Ensure india-trade-cli is on PYTHONPATH for subprocess imports
+    # Ensure both project root and india-trade-cli are on PYTHONPATH for subprocess imports
+    root_path = str(cfg.project_root)
     cli_path = str(cfg.project_root / "india-trade-cli")
     existing_pypath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{cli_path}{os.pathsep}{existing_pypath}" if existing_pypath else cli_path
+    paths = [root_path, cli_path]
+    if existing_pypath:
+        paths.append(existing_pypath)
+    env["PYTHONPATH"] = os.pathsep.join(paths)
 
     # Resolve active LLM provider (NIM → OpenRouter → Ollama)
     llm = get_active_llm_config(cfg)
@@ -1464,6 +1468,13 @@ def run_daemon(cfg: Config) -> None:
     if ai_client:
         ai_client.start_heartbeat()
         log.info("💓 AI-Trader Heartbeat Daemon Started.")
+
+    # Start the Telegram command listener background thread
+    try:
+        from orchestrator.telegram_dashboard import start_telegram_listener
+        start_telegram_listener(cfg)
+    except Exception as tl_err:
+        log.error(f"Failed to start Telegram command listener: {tl_err}")
 
     executed_today = set()
     # BUG-09 FIX: Track last reset date to prevent repeated midnight resets

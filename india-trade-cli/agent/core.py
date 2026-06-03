@@ -702,36 +702,41 @@ class OpenAIProvider(LLMProvider):
         if cached:
             return cached["content"], cached["tool_calls"]
             
-        # 3. Cache miss: Throttled & Serialized API execution
+        # 3. Cache miss: Throttled start & Serialized API execution
+        sleep_time = 0
         with _openai_rate_limit_lock:
             now = time.time()
             elapsed = now - _openai_last_call_time
             if elapsed < _MIN_API_INTERVAL:
                 sleep_time = _MIN_API_INTERVAL - elapsed
-                time.sleep(sleep_time)
+                _openai_last_call_time = now + sleep_time
+            else:
+                _openai_last_call_time = now
                 
-            kwargs = {}
-            if self._is_reasoning_model():
-                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 4096}
-                kwargs["max_tokens"] = 16384
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+            
+        kwargs = {}
+        if self._is_reasoning_model():
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 4096}
+            kwargs["max_tokens"] = 16384
 
-            r = self._client.chat.completions.create(model=self.model, messages=messages, tools=tools, **kwargs)
-            _openai_last_call_time = time.time()
-            
-            msg = r.choices[0].message
-            tcs = []
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    try:
-                        args = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
-                        args = {}
-                    tcs.append({"id": tc.id, "name": tc.function.name, "input": args})
-            
-            content = msg.content or ""
-            # Save response to cache
-            _set_cached_response(prompt_hash, {"content": content, "tool_calls": tcs})
-            return content, tcs
+        r = self._client.chat.completions.create(model=self.model, messages=messages, tools=tools, **kwargs)
+        
+        msg = r.choices[0].message
+        tcs = []
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+                tcs.append({"id": tc.id, "name": tc.function.name, "input": args})
+        
+        content = msg.content or ""
+        # Save response to cache
+        _set_cached_response(prompt_hash, {"content": content, "tool_calls": tcs})
+        return content, tcs
 
     @exhaustive_log
     def _stream_round(self, messages, tools):
@@ -752,67 +757,72 @@ class OpenAIProvider(LLMProvider):
         if cached:
             return cached["content"], cached["tool_calls"]
             
-        # 3. Cache miss: Throttled & Serialized API execution
+        # 3. Cache miss: Throttled start & Serialized API execution
+        sleep_time = 0
         with _openai_rate_limit_lock:
             now = time.time()
             elapsed = now - _openai_last_call_time
             if elapsed < _MIN_API_INTERVAL:
                 sleep_time = _MIN_API_INTERVAL - elapsed
-                time.sleep(sleep_time)
+                _openai_last_call_time = now + sleep_time
+            else:
+                _openai_last_call_time = now
                 
-            kwargs = {}
-            if self._is_reasoning_model():
-                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 4096}
-                kwargs["max_tokens"] = 16384
-
-            stream = self._client.chat.completions.create(
-                model=self.model, messages=messages, tools=tools, stream=True, **kwargs
-            )
-            _openai_last_call_time = time.time()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
             
-            text = ""
-            tc_acc: dict[int, dict] = {}
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                
-                reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning:
-                    text += reasoning
-                    console.print(f"[dim blue]{reasoning}[/dim blue]", end="", markup=True, highlight=False)
-                    
-                if delta.content:
-                    text += delta.content
-                    console.print(delta.content, end="", markup=False, highlight=False)
-                if delta.tool_calls:
-                    for d in delta.tool_calls:
-                        idx = d.index
-                        if idx not in tc_acc:
-                            tc_acc[idx] = {"id": "", "name": "", "args": ""}
-                        if d.id:
-                            tc_acc[idx]["id"] += d.id
-                        if d.function:
-                            if d.function.name:
-                                tc_acc[idx]["name"] += d.function.name
-                            if d.function.arguments:
-                                tc_acc[idx]["args"] += d.function.arguments
+        kwargs = {}
+        if self._is_reasoning_model():
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 4096}
+            kwargs["max_tokens"] = 16384
 
-            if text:
-                console.print()
-
-            tcs = []
-            for idx in sorted(tc_acc):
-                tc = tc_acc[idx]
-                try:
-                    args = json.loads(tc["args"]) if tc["args"] else {}
-                except json.JSONDecodeError:
-                    args = {}
-                tcs.append({"id": tc["id"], "name": tc["name"], "input": args})
+        stream = self._client.chat.completions.create(
+            model=self.model, messages=messages, tools=tools, stream=True, **kwargs
+        )
+        
+        text = ""
+        tc_acc: dict[int, dict] = {}
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                text += reasoning
+                console.print(f"[dim blue]{reasoning}[/dim blue]", end="", markup=True, highlight=False)
                 
-            # Save response to cache
-            _set_cached_response(prompt_hash, {"content": text, "tool_calls": tcs})
-            return text, tcs
+            if delta.content:
+                text += delta.content
+                console.print(delta.content, end="", markup=False, highlight=False)
+            if delta.tool_calls:
+                for d in delta.tool_calls:
+                    idx = d.index
+                    if idx not in tc_acc:
+                        tc_acc[idx] = {"id": "", "name": "", "args": ""}
+                    if d.id:
+                        tc_acc[idx]["id"] += d.id
+                    if d.function:
+                        if d.function.name:
+                            tc_acc[idx]["name"] += d.function.name
+                        if d.function.arguments:
+                            tc_acc[idx]["args"] += d.function.arguments
+
+        if text:
+            console.print()
+
+        tcs = []
+        for idx in sorted(tc_acc):
+            tc = tc_acc[idx]
+            try:
+                args = json.loads(tc["args"]) if tc["args"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            tcs.append({"id": tc["id"], "name": tc["name"], "input": args})
+            
+        # Save response to cache
+        _set_cached_response(prompt_hash, {"content": text, "tool_calls": tcs})
+        return text, tcs
 
 
 # ── Claude CLI provider (subscription) ────────────────────────
