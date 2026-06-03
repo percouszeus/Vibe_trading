@@ -96,12 +96,15 @@ class AITraderClient:
             return None
             
         url = f"{BASE_URL}/signals/strategy"
+        # API expects comma-separated strings, not lists
+        symbols_str = ",".join(symbols) if isinstance(symbols, list) else (symbols or "")
+        tags_str = ",".join(tags) if isinstance(tags, list) else (tags or "strategy,automated")
         payload = {
             "market": market,
             "title": title,
             "content": content,
-            "symbols": symbols or [],
-            "tags": tags or ["strategy", "automated"]
+            "symbols": symbols_str,
+            "tags": tags_str,
         }
         try:
             resp = requests.post(url, headers=self.headers, json=payload, timeout=10, verify=False)

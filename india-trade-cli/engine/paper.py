@@ -50,6 +50,13 @@ MIS_MARGIN = 0.20  # 20% margin for intraday
 NRML_MARGIN = 0.12  # 12% margin for F&O NRML
 COMMISSION_RATE = 0.0003  # 0.03% NSE commission (STT, Transaction, Brokerage simulation)
 
+# Margin multipliers used when unwinding SELL positions (must mirror the BUY-side logic)
+MARGIN_MULTIPLIER = {
+    "CNC": 1.0,    # full value
+    "MIS": MIS_MARGIN,
+    "NRML": NRML_MARGIN,
+}
+
 DEFAULT_STATE: dict = {
     "cash": 200_000.0,
     "holdings": {},  # symbol → {qty, avg_price, product}

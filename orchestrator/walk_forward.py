@@ -91,17 +91,19 @@ class WalkForwardValidator:
         return avg_acc
 
 if __name__ == "__main__":
-    # Mock usage / Testing
+    # Lightweight smoke-test — kept small so the subprocess finishes in <60s
+    # when called from phase_auto_improve's walk-forward health check.
     data = {
-        'Open': np.random.randn(2000) + 100,
-        'High': np.random.randn(2000) + 102,
-        'Low': np.random.randn(2000) + 98,
-        'Close': np.random.randn(2000) + 100,
-        'Volume': np.random.randint(1000, 10000, 2000),
-        'Target': np.random.choice([0, 1, -1], 2000)
+        'Open':   np.random.randn(400) + 100,
+        'High':   np.random.randn(400) + 102,
+        'Low':    np.random.randn(400) + 98,
+        'Close':  np.random.randn(400) + 100,
+        'Volume': np.random.randint(1000, 10000, 400),
+        'Target': np.random.choice([0, 1, -1], 400),
     }
-    dates = pd.date_range(start='2020-01-01', periods=2000, freq='D')
+    dates = pd.date_range(start='2024-01-01', periods=400, freq='D')
     df = pd.DataFrame(data, index=dates)
-    
-    validator = WalkForwardValidator(initial_train_days=730, test_days=90)
+
+    validator = WalkForwardValidator(initial_train_days=180, test_days=60)
     validator.run_validation(df)
+
