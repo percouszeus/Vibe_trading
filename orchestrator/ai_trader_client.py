@@ -116,7 +116,7 @@ class AITraderClient:
             return None
 
     @exhaustive_log
-    def sync_external_trade(self, action: str, symbol: str, price: float, quantity: float, content: str = ""):
+    def sync_external_trade(self, action: str, symbol: str, price: float, quantity: float, content: str = "", executed_at: str = ""):
         """Syncs an external trade spoofed as crypto to avoid market hours restriction, but with the real ticker."""
         if not self.token:
             logger.warning("Cannot sync trade, no auth token.")
@@ -130,7 +130,7 @@ class AITraderClient:
             "price": price,
             "quantity": quantity,
             "content": content,
-            "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+            "executed_at": executed_at or time.strftime("%Y-%m-%dT%H:%M:%S")
         }
         
         try:

@@ -367,7 +367,7 @@ def _place_strategy_legs_automated(broker: Any, strategy: Any, symbol: str) -> l
             from market.events import get_expiry_dates
             try:
                 expiry = get_expiry_dates().monthly
-                exp_compact = expiry.replace("-", "").replace("20", "")[2:]
+                exp_compact = expiry.strftime("%y%b").upper()
             except Exception:
                 exp_compact = "25MAR"
             trade_symbol = f"{symbol}{exp_compact}{int(strike)}{opt_type}"

@@ -277,9 +277,9 @@ class PaperBroker(BrokerAPI):
     def get_options_chain(
         self, underlying: str, expiry: str | None = None
     ) -> list[OptionsContract]:
-        from market.options import get_options_chain
+        from market.nse_scraper import nse_get_options_chain
 
-        return get_options_chain(underlying, expiry)
+        return nse_get_options_chain(underlying, expiry)
 
     # ── Internal helpers ──────────────────────────────────────
 

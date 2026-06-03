@@ -227,7 +227,7 @@ def _place_strategy_legs(broker, strategy: StrategyResult, symbol: str, mode: st
 
             try:
                 expiry = get_expiry_dates().monthly
-                exp_compact = expiry.replace("-", "").replace("20", "")[2:]  # "25APR"
+                exp_compact = expiry.strftime("%y%b").upper()
             except Exception:
                 exp_compact = "25MAR"
             trade_symbol = f"{symbol}{exp_compact}{int(strike)}{opt_type}"
