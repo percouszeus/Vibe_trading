@@ -59,7 +59,267 @@ class JsonFormatter(logging.Formatter):
             log_record["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_record)
 
+_network_patched = False
+
+def patch_network_libraries():
+    global _network_patched
+    if _network_patched:
+        return
+    _network_patched = True
+
+    # 1. requests patch
+    try:
+        import requests
+        if not hasattr(requests.Session.send, "_is_patched"):
+            requests_original_send = requests.Session.send
+
+            @functools.wraps(requests_original_send)
+            def new_send(self, request, **kwargs):
+                logger = logging.getLogger("network.requests")
+                
+                # Sanitize headers
+                headers = dict(request.headers)
+                for k in list(headers.keys()):
+                    if any(x in k.lower() for x in ["auth", "key", "token", "cookie", "secret"]):
+                        headers[k] = "***REDACTED***"
+                
+                url = request.url
+                method = request.method
+                body = request.body
+                if isinstance(body, bytes):
+                    try:
+                        body = body.decode('utf-8', errors='ignore')
+                    except Exception:
+                        body = "<binary data>"
+                
+                logger.trace(
+                    f"HTTP Request: {method} {url}",
+                    extra={"event_data": {
+                        "event": "http_request",
+                        "library": "requests",
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "body": str(body)[:1000] if body else None
+                    }}
+                )
+                
+                start_time = datetime.now(timezone.utc)
+                try:
+                    response = requests_original_send(self, request, **kwargs)
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    
+                    resp_headers = dict(response.headers)
+                    for k in list(resp_headers.keys()):
+                        if any(x in k.lower() for x in ["cookie", "set-cookie", "token", "auth", "key"]):
+                            resp_headers[k] = "***REDACTED***"
+                    
+                    resp_body = ""
+                    try:
+                        resp_body = response.text
+                    except Exception:
+                        resp_body = "<undecodable>"
+                    
+                    logger.trace(
+                        f"HTTP Response: {method} {url} | Status: {response.status_code}",
+                        extra={"event_data": {
+                            "event": "http_response",
+                            "library": "requests",
+                            "method": method,
+                            "url": url,
+                            "status_code": response.status_code,
+                            "duration_ms": duration_ms,
+                            "headers": resp_headers,
+                            "body": str(resp_body)[:2000] if resp_body else None
+                        }}
+                    )
+                    return response
+                except Exception as e:
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    logger.error(
+                        f"HTTP Request Failed: {method} {url} | Error: {str(e)}",
+                        extra={"event_data": {
+                            "event": "http_error",
+                            "library": "requests",
+                            "method": method,
+                            "url": url,
+                            "duration_ms": duration_ms,
+                            "error": str(e)
+                        }}
+                    )
+                    raise
+            new_send._is_patched = True
+            requests.Session.send = new_send
+    except ImportError:
+        pass
+
+    # 2. httpx patch
+    try:
+        import httpx
+        if not hasattr(httpx.Client.send, "_is_patched"):
+            httpx_original_send = httpx.Client.send
+            
+            @functools.wraps(httpx_original_send)
+            def new_send(self, request, **kwargs):
+                logger = logging.getLogger("network.httpx")
+                
+                headers = dict(request.headers)
+                for k in list(headers.keys()):
+                    if any(x in k.lower() for x in ["auth", "key", "token", "cookie", "secret"]):
+                        headers[k] = "***REDACTED***"
+                
+                url = str(request.url)
+                method = request.method
+                
+                body = ""
+                try:
+                    body = request.content.decode('utf-8', errors='ignore') if request.content else ""
+                except Exception:
+                    body = "<binary or streaming data>"
+                
+                logger.trace(
+                    f"HTTP Request: {method} {url}",
+                    extra={"event_data": {
+                        "event": "http_request",
+                        "library": "httpx_sync",
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "body": str(body)[:1000] if body else None
+                    }}
+                )
+                
+                start_time = datetime.now(timezone.utc)
+                try:
+                    response = httpx_original_send(self, request, **kwargs)
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    
+                    resp_headers = dict(response.headers)
+                    for k in list(resp_headers.keys()):
+                        if any(x in k.lower() for x in ["cookie", "set-cookie", "token", "auth", "key"]):
+                            resp_headers[k] = "***REDACTED***"
+                    
+                    resp_body = ""
+                    try:
+                        resp_body = response.text
+                    except Exception:
+                        resp_body = "<undecodable or streaming>"
+                    
+                    logger.trace(
+                        f"HTTP Response: {method} {url} | Status: {response.status_code}",
+                        extra={"event_data": {
+                            "event": "http_response",
+                            "library": "httpx_sync",
+                            "method": method,
+                            "url": url,
+                            "status_code": response.status_code,
+                            "duration_ms": duration_ms,
+                            "headers": resp_headers,
+                            "body": str(resp_body)[:2000] if resp_body else None
+                        }}
+                    )
+                    return response
+                except Exception as e:
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    logger.error(
+                        f"HTTP Request Failed: {method} {url} | Error: {str(e)}",
+                        extra={"event_data": {
+                            "event": "http_error",
+                            "library": "httpx_sync",
+                            "method": method,
+                            "url": url,
+                            "duration_ms": duration_ms,
+                            "error": str(e)
+                        }}
+                    )
+                    raise
+            new_send._is_patched = True
+            httpx.Client.send = new_send
+
+            # Patch AsyncClient
+            httpx_async_original_send = httpx.AsyncClient.send
+            
+            @functools.wraps(httpx_async_original_send)
+            async def new_async_send(self, request, **kwargs):
+                logger = logging.getLogger("network.httpx_async")
+                
+                headers = dict(request.headers)
+                for k in list(headers.keys()):
+                    if any(x in k.lower() for x in ["auth", "key", "token", "cookie", "secret"]):
+                        headers[k] = "***REDACTED***"
+                
+                url = str(request.url)
+                method = request.method
+                
+                body = ""
+                try:
+                    body = request.content.decode('utf-8', errors='ignore') if request.content else ""
+                except Exception:
+                    body = "<binary or streaming data>"
+                
+                logger.trace(
+                    f"HTTP Request: {method} {url}",
+                    extra={"event_data": {
+                        "event": "http_request",
+                        "library": "httpx_async",
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "body": str(body)[:1000] if body else None
+                    }}
+                )
+                
+                start_time = datetime.now(timezone.utc)
+                try:
+                    response = await httpx_async_original_send(self, request, **kwargs)
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    
+                    resp_headers = dict(response.headers)
+                    for k in list(resp_headers.keys()):
+                        if any(x in k.lower() for x in ["cookie", "set-cookie", "token", "auth", "key"]):
+                            resp_headers[k] = "***REDACTED***"
+                    
+                    resp_body = ""
+                    try:
+                        resp_body = response.text
+                    except Exception:
+                        resp_body = "<undecodable or streaming>"
+                    
+                    logger.trace(
+                        f"HTTP Response: {method} {url} | Status: {response.status_code}",
+                        extra={"event_data": {
+                            "event": "http_response",
+                            "library": "httpx_async",
+                            "method": method,
+                            "url": url,
+                            "status_code": response.status_code,
+                            "duration_ms": duration_ms,
+                            "headers": resp_headers,
+                            "body": str(resp_body)[:2000] if resp_body else None
+                        }}
+                    )
+                    return response
+                except Exception as e:
+                    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    logger.error(
+                        f"HTTP Request Failed: {method} {url} | Error: {str(e)}",
+                        extra={"event_data": {
+                            "event": "http_error",
+                            "library": "httpx_async",
+                            "method": method,
+                            "url": url,
+                            "duration_ms": duration_ms,
+                            "error": str(e)
+                        }}
+                    )
+                    raise
+            new_async_send._is_patched = True
+            httpx.AsyncClient.send = new_async_send
+    except ImportError:
+        pass
+
 def setup_exhaustive_logging(log_file_path: str):
+    patch_network_libraries()
     logger = logging.getLogger()
     logger.setLevel(TRACE_LEVEL)
     
