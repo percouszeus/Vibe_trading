@@ -1431,26 +1431,29 @@ def _build_env(cfg: Config) -> dict:
 
 # ── Daemon Mode ──────────────────────────────────────────────
 
+# Schedule format: (scheduled_time, phase_name, phase_fn, deadline)
+# deadline: latest time a phase may START on restart (None = no limit, always run if missed)
+# Phases with tight market-hours windows get a deadline so they are skipped on late restart.
 SCHEDULE = [
-    ("08:45", "premarket",        phase_premarket),
-    ("09:15", "analysis",         phase_analysis),
-    ("09:30", "execute",          phase_execute),
-    ("12:30", "midday",           phase_midday),
-    ("15:15", "eod",              phase_eod),
-    ("15:30", "capital_split",    phase_capital_split),
-    ("16:00", "auto_improve",     phase_auto_improve),
-    ("17:00", "auto_heal",        phase_auto_heal),
-    ("17:30", "dashboard_report", phase_dashboard_report),
-    ("18:00", "graduation_check", phase_graduation_check),
+    ("08:45", "premarket",        phase_premarket,        "09:30"),
+    ("09:15", "analysis",         phase_analysis,         "13:00"),
+    ("09:30", "execute",          phase_execute,          "13:30"),
+    ("12:30", "midday",           phase_midday,           "14:00"),
+    ("15:15", "eod",              phase_eod,              "15:45"),
+    ("15:30", "capital_split",    phase_capital_split,    None),
+    ("16:00", "auto_improve",     phase_auto_improve,     None),
+    ("17:00", "auto_heal",        phase_auto_heal,        None),
+    ("17:30", "dashboard_report", phase_dashboard_report, None),
+    ("18:00", "graduation_check", phase_graduation_check, None),
 ]
 
 WEEKEND_SCHEDULE = [
-    ("09:00", "weekend_deep_review",       phase_weekend_deep_review),
-    ("10:00", "weekend_backtest_healing",  phase_weekend_backtest_healing),
-    ("14:00", "weekend_deep_review_2",     phase_weekend_deep_review),
-    ("15:00", "weekend_backtest_healing_2", phase_weekend_backtest_healing),
-    ("17:00", "auto_heal",                 phase_auto_heal),
-    ("18:00", "weekly_maintenance",         phase_weekly_maintenance),
+    ("09:00", "weekend_deep_review",        phase_weekend_deep_review,    None),
+    ("10:00", "weekend_backtest_healing",   phase_weekend_backtest_healing, None),
+    ("14:00", "weekend_deep_review_2",      phase_weekend_deep_review,    None),
+    ("15:00", "weekend_backtest_healing_2", phase_weekend_backtest_healing, None),
+    ("17:00", "auto_heal",                  phase_auto_heal,              None),
+    ("18:00", "weekly_maintenance",         phase_weekly_maintenance,     None),
 ]
 
 
@@ -1476,9 +1479,28 @@ def run_daemon(cfg: Config) -> None:
     except Exception as tl_err:
         log.error(f"Failed to start Telegram command listener: {tl_err}")
 
+    # ── Restart Recovery: pre-populate executed_today from today's journal ──
+    # Without this, every service restart re-runs all past-due phases for today.
     executed_today = set()
-    # BUG-09 FIX: Track last reset date to prevent repeated midnight resets
     last_reset_date = datetime.now().strftime("%Y-%m-%d")
+    today_journal = JOURNAL_DIR / f"{last_reset_date}.jsonl"
+    if today_journal.exists():
+        try:
+            with open(today_journal) as _jf:
+                for _line in _jf:
+                    try:
+                        _entry = json.loads(_line)
+                        _phase = _entry.get("phase", "")
+                        if _phase:
+                            executed_today.add(f"{last_reset_date}_{_phase}")
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+            log.info(f"♻️ Restart recovery: pre-loaded {len(executed_today)} executed phases from today's journal")
+        except Exception as _jr_err:
+            log.warning(f"Could not read today's journal for restart recovery: {_jr_err}")
+    else:
+        log.info("No journal for today yet — starting fresh schedule")
+
     syncer = QuoteSyncer(interval=5)
     syncer.start()
 
@@ -1505,9 +1527,20 @@ def run_daemon(cfg: Config) -> None:
             log.info(f"📅 {mode_label} mode active for {today}")
             executed_today.add(mode_key)
 
-        for sched_time, phase_name, phase_fn in active_schedule:
+        for sched_entry in active_schedule:
+            sched_time, phase_name, phase_fn = sched_entry[0], sched_entry[1], sched_entry[2]
+            deadline = sched_entry[3] if len(sched_entry) > 3 else None
             key = f"{today}_{phase_name}"
             if key not in executed_today and current_time >= sched_time:
+                # Skip phases that missed their deadline (e.g. after late restart)
+                if deadline and current_time > deadline:
+                    log.warning(
+                        f"⏭️ Skipping late phase '{phase_name}' — deadline {deadline} passed "
+                        f"(current: {current_time}). Marking as done to prevent re-run."
+                    )
+                    executed_today.add(key)
+                    continue
+
                 log.info(f"⏰ Triggering phase: {phase_name} (scheduled: {sched_time}, mode: {mode_label})")
                 try:
                     phase_fn(cfg)
