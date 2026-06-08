@@ -230,6 +230,7 @@ PROVIDER_CLAUDE_CLI = "claude_subscription"
 PROVIDER_OPENAI_SUB = "openai_subscription"
 PROVIDER_GEMINI_SUB = "gemini_subscription"
 PROVIDER_OLLAMA = "ollama"
+PROVIDER_FREELLM = "freellm"
 
 GEMINI_DEFAULT_MODEL = "gemini-2.5-pro"
 OLLAMA_DEFAULT_MODEL = "llama3.1"
@@ -242,6 +243,7 @@ ALL_PROVIDERS = [
     PROVIDER_OPENAI_SUB,
     PROVIDER_GEMINI_SUB,
     PROVIDER_OLLAMA,
+    PROVIDER_FREELLM,
 ]
 
 
@@ -2074,15 +2076,21 @@ def get_provider(
         PROVIDER_OPENAI_SUB: OpenAISubscriptionProvider,
         PROVIDER_GEMINI_SUB: GeminiVertexProvider,
         PROVIDER_OLLAMA: None,  # handled specially below
+        PROVIDER_FREELLM: None,  # handled specially below
     }
 
     @exhaustive_log
     def _build_provider(prov_name, model, registry, sys_prompt):
-        """Construct a provider, with special handling for Ollama."""
+        """Construct a provider, with special handling for Ollama and FreeLLM."""
         if prov_name == PROVIDER_OLLAMA:
             base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
             mdl = model or os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL)
             return OpenAIProvider(mdl, registry, sys_prompt, base_url=base, api_key="ollama")
+        if prov_name == PROVIDER_FREELLM:
+            base = os.environ.get("FREELLM_BASE_URL", "http://localhost:3000/v1")
+            mdl = model or os.environ.get("FREELLM_MODEL", "free-smart")
+            key = os.environ.get("FREELLM_API_KEY", "unused")
+            return OpenAIProvider(mdl, registry, sys_prompt, base_url=base, api_key=key)
         prov_cls = dispatch.get(prov_name, AnthropicProvider)
         return prov_cls(model, registry, sys_prompt)
 
@@ -2338,6 +2346,8 @@ def _default_model(provider: str) -> str:
         return GEMINI_DEFAULT_MODEL
     if provider == PROVIDER_OLLAMA:
         return os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL)
+    if provider == PROVIDER_FREELLM:
+        return os.environ.get("FREELLM_MODEL", "free-smart")
     return ANTHROPIC_DEFAULT_MODEL
 
 
@@ -2744,12 +2754,17 @@ def get_fast_provider(
         PROVIDER_CLAUDE_CLI: ClaudeCLIProvider,
         PROVIDER_GEMINI_SUB: GeminiVertexProvider,
         PROVIDER_OLLAMA: None,
+        PROVIDER_FREELLM: None,
     }
 
     try:
         if chosen_prov == PROVIDER_OLLAMA:
             base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
             return OpenAIProvider(chosen_model, reg, system, base_url=base, api_key="ollama")
+        if chosen_prov == PROVIDER_FREELLM:
+            base = os.environ.get("FREELLM_BASE_URL", "http://localhost:3000/v1")
+            key = os.environ.get("FREELLM_API_KEY", "unused")
+            return OpenAIProvider(chosen_model, reg, system, base_url=base, api_key=key)
         prov_cls = dispatch.get(chosen_prov, AnthropicProvider)
         return prov_cls(chosen_model, reg, system)
     except Exception:
@@ -2774,11 +2789,16 @@ def build_provider_from_env(registry=None, system_prompt=None) -> "LLMProvider":
         PROVIDER_CLAUDE_CLI: ClaudeCLIProvider,
         PROVIDER_GEMINI_SUB: GeminiVertexProvider,
         PROVIDER_OLLAMA: None,
+        PROVIDER_FREELLM: None,
     }
 
     if chosen == PROVIDER_OLLAMA:
         base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         return OpenAIProvider(model, reg, sys, base_url=base, api_key="ollama")
+    if chosen == PROVIDER_FREELLM:
+        base = os.environ.get("FREELLM_BASE_URL", "http://localhost:3000/v1")
+        key = os.environ.get("FREELLM_API_KEY", "unused")
+        return OpenAIProvider(model, reg, sys, base_url=base, api_key=key)
     prov_cls = dispatch.get(chosen, AnthropicProvider)
     return prov_cls(model, reg, sys)
 
@@ -2820,10 +2840,16 @@ def build_fast_provider_from_env(registry=None) -> "LLMProvider":
         PROVIDER_GEMINI: GeminiProvider,
         PROVIDER_CLAUDE_CLI: ClaudeCLIProvider,
         PROVIDER_GEMINI_SUB: GeminiVertexProvider,
+        PROVIDER_OLLAMA: None,
+        PROVIDER_FREELLM: None,
     }
     if chosen == PROVIDER_OLLAMA:
         base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         return OpenAIProvider(model, reg, sys, base_url=base, api_key="ollama")
+    if chosen == PROVIDER_FREELLM:
+        base = os.environ.get("FREELLM_BASE_URL", "http://localhost:3000/v1")
+        key = os.environ.get("FREELLM_API_KEY", "unused")
+        return OpenAIProvider(model, reg, sys, base_url=base, api_key=key)
     prov_cls = dispatch.get(chosen, AnthropicProvider)
     return prov_cls(model, reg, sys)
 

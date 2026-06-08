@@ -83,6 +83,16 @@ services:
       - ./core-engine:/app/core-engine
     command: python -m orchestrator.daily_cycle --daemon
 
+  # ── FreeLLM Gateway (Unified OpenAI compatible free tier proxy) ──────────
+  freellm:
+    image: ghcr.io/devansh-365/freellm:latest
+    container_name: vibe-freellm
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+
 volumes:
   ollama_data:
   trade_data:

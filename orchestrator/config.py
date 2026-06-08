@@ -42,9 +42,25 @@ class LLMConfig:
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     nim_model: str = "meta/llama-3.1-70b-instruct"
 
+    # OpenAI-compatible low-latency provider
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # OpenAI-compatible MiniMax provider
+    minimax_api_key: str = ""
+    minimax_base_url: str = "https://api.minimax.io/v1"
+    minimax_model: str = "MiniMax-M2"
+
+    # FreeLLM / FreeLLMAPI Gateway provider
+    freellm_api_key: str = "unused"
+    freellm_base_url: str = "http://localhost:3000/v1"
+    freellm_model: str = "free-smart"
+
     temperature: float = 0.0
     timeout: int = 120
     max_retries: int = 2
+    fallback_order: str = "groq,nim,openrouter,minimax,ollama"
 
 
 @dataclass
@@ -172,9 +188,19 @@ def load_config() -> Config:
             nim_api_key=os.getenv("NIM_API_KEY", ""),
             nim_base_url=os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
             nim_model=os.getenv("NIM_MODEL", "meta/llama-3.1-70b-instruct"),
+            groq_api_key=os.getenv("GROQ_API_KEY", ""),
+            groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            minimax_api_key=os.getenv("MINIMAX_API_KEY", ""),
+            minimax_base_url=os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1"),
+            minimax_model=os.getenv("MINIMAX_MODEL", "MiniMax-M2"),
+            freellm_api_key=os.getenv("FREELLM_API_KEY", "unused"),
+            freellm_base_url=os.getenv("FREELLM_BASE_URL", "http://localhost:3000/v1"),
+            freellm_model=os.getenv("FREELLM_MODEL", "free-smart"),
             temperature=float(os.getenv("LANGCHAIN_TEMPERATURE", "0.0")),
             timeout=int(os.getenv("TIMEOUT_SECONDS", "120")),
             max_retries=int(os.getenv("MAX_RETRIES", "2")),
+            fallback_order=os.getenv("LLM_FALLBACK_ORDER", "groq,nim,openrouter,minimax,ollama"),
         ),
         trading=TradingConfig(
             mode=os.getenv("TRADING_MODE", "PAPER"),
@@ -236,10 +262,10 @@ def load_config() -> Config:
 def get_active_llm_config(cfg: Config) -> dict:
     """
     Resolve which LLM provider to use for subprocesses.
-    Priority: NIM (cloud, 70B) → OpenRouter (cloud) → Ollama (local).
-    Verifies connection validity to prevent authorization failures.
+    Respects LANGCHAIN_PROVIDER first. This intentionally does not send
+    validation chat requests, so NIM/OpenRouter quotas are used only for
+    real analysis work.
     """
-    import openai
     import logging
     logger = logging.getLogger("orchestrator")
 
@@ -247,51 +273,98 @@ def get_active_llm_config(cfg: Config) -> dict:
     if _active_llm_cache is not None:
         return _active_llm_cache
 
-    # 1. NVIDIA NIM — best quality (70B model), free tier available
-    if cfg.llm.nim_api_key and cfg.llm.nim_api_key.strip():
-        try:
-            client = openai.OpenAI(base_url=cfg.llm.nim_base_url, api_key=cfg.llm.nim_api_key)
-            client.chat.completions.create(
-                model=cfg.llm.nim_model,
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=5,
-                timeout=4.0
-            )
-            _active_llm_cache = {
-                "provider": "nim",
-                "base_url": cfg.llm.nim_base_url,
-                "api_key": cfg.llm.nim_api_key,
-                "model": cfg.llm.nim_model,
-            }
-            return _active_llm_cache
-        except Exception as e:
-            logger.warning(f"NVIDIA NIM validation failed ({e}), trying OpenRouter fallback...")
+    def _ollama_config() -> dict:
+        return {
+            "provider": "ollama",
+            "base_url": cfg.llm.primary_base_url,
+            "api_key": "ollama",
+            "model": cfg.llm.primary_model,
+        }
 
-    # 2. OpenRouter — good fallback, multiple models
-    if cfg.llm.openrouter_api_key and cfg.llm.openrouter_api_key.strip():
-        try:
-            client = openai.OpenAI(base_url=cfg.llm.openrouter_base_url, api_key=cfg.llm.openrouter_api_key)
-            client.chat.completions.create(
-                model=cfg.llm.openrouter_model,
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=5,
-                timeout=4.0
-            )
-            _active_llm_cache = {
+    def _requested_provider() -> str:
+        preferred = (cfg.llm.primary_provider or "ollama").strip().lower()
+        aliases = {
+            "nvidia": "nim",
+            "nvidia_nim": "nim",
+            "local": "ollama",
+            "groq_api": "groq",
+            "minimax_api": "minimax",
+        }
+        preferred = aliases.get(preferred, preferred)
+        supported = ["auto", "ollama", "groq", "minimax", "openrouter", "nim", "freellm"]
+        if preferred not in supported:
+            logger.warning("Unknown LANGCHAIN_PROVIDER=%s; using ollama", cfg.llm.primary_provider)
+            preferred = "ollama"
+        return preferred
+
+    def _configured_provider_order() -> list[str]:
+        supported = ["freellm", "groq", "nim", "openrouter", "minimax", "ollama"]
+        order = []
+        for raw in cfg.llm.fallback_order.split(","):
+            provider = raw.strip().lower()
+            if provider in supported and provider not in order:
+                order.append(provider)
+        for provider in supported:
+            if provider not in order:
+                order.append(provider)
+        return order
+
+    def _provider_config(provider: str) -> dict | None:
+        if provider == "ollama":
+            return _ollama_config()
+        if provider == "freellm" and cfg.llm.freellm_base_url.strip():
+            return {
+                "provider": "freellm",
+                "base_url": cfg.llm.freellm_base_url,
+                "api_key": cfg.llm.freellm_api_key,
+                "model": cfg.llm.freellm_model,
+            }
+        if provider == "openrouter" and cfg.llm.openrouter_api_key.strip():
+            return {
                 "provider": "openrouter",
                 "base_url": cfg.llm.openrouter_base_url,
                 "api_key": cfg.llm.openrouter_api_key,
                 "model": cfg.llm.openrouter_model,
             }
-            return _active_llm_cache
-        except Exception as e:
-            logger.warning(f"OpenRouter validation failed ({e}), trying local Ollama fallback...")
+        if provider == "nim" and cfg.llm.nim_api_key.strip():
+            return {
+                "provider": "nim",
+                "base_url": cfg.llm.nim_base_url,
+                "api_key": cfg.llm.nim_api_key,
+                "model": cfg.llm.nim_model,
+            }
+        if provider == "groq" and cfg.llm.groq_api_key.strip():
+            return {
+                "provider": "groq",
+                "base_url": cfg.llm.groq_base_url,
+                "api_key": cfg.llm.groq_api_key,
+                "model": cfg.llm.groq_model,
+            }
+        if provider == "minimax" and cfg.llm.minimax_api_key.strip():
+            return {
+                "provider": "minimax",
+                "base_url": cfg.llm.minimax_base_url,
+                "api_key": cfg.llm.minimax_api_key,
+                "model": cfg.llm.minimax_model,
+            }
+        return None
 
-    # 3. Ollama — local, no API key needed, but must be running
-    _active_llm_cache = {
-        "provider": "ollama",
-        "base_url": cfg.llm.primary_base_url,
-        "api_key": "ollama",
-        "model": cfg.llm.primary_model,
-    }
+    provider = _requested_provider()
+    if provider == "auto":
+        for candidate in _configured_provider_order():
+            resolved = _provider_config(candidate)
+            if resolved:
+                _active_llm_cache = resolved
+                return _active_llm_cache
+        _active_llm_cache = _ollama_config()
+    elif provider in ("freellm", "openrouter", "nim", "groq", "minimax", "ollama"):
+        resolved = _provider_config(provider)
+        if resolved:
+            _active_llm_cache = resolved
+        else:
+            logger.warning("LANGCHAIN_PROVIDER=%s is missing required config; using ollama", provider)
+            _active_llm_cache = _ollama_config()
+    else:
+        _active_llm_cache = _ollama_config()
+
     return _active_llm_cache
